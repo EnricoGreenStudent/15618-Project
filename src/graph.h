@@ -2,7 +2,7 @@
 
 struct edge {
     int dest;
-    int weight;
+    float weight;
 };
 
 struct graph {

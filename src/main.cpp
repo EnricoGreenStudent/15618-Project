@@ -2,9 +2,9 @@
 #include <fstream>
 #include <stdio.h>
 #include <string.h>
-#include "graph.cpp"
-#include "timing.h"
 #include <unistd.h>
+#include "graph.h"
+#include "timing.h"
 
 // Prints a list of edges in the graph. Used for testing
 void testGraphLoading(graph g) {
@@ -15,7 +15,7 @@ void testGraphLoading(graph g) {
     }
 }
 
-void dummyFunc(graph g, std::vector<int> dists) {
+void dummyFunc(graph g, std::vector<float> dists) {
     sleep(1);
     for(int i = 0; i < g.numVertices; i++) {
         dists.push_back(i);
@@ -23,7 +23,7 @@ void dummyFunc(graph g, std::vector<int> dists) {
 }
 
 // Outputs the SSSP results to a file
-void saveResults(std::vector<int> dists, std::string fileName) {
+void saveResults(std::vector<float> dists, std::string fileName) {
     std::ofstream file(fileName);
     for(int i = 0; i < dists.size(); i++) {
         file << std::to_string(i);
@@ -91,7 +91,7 @@ int main(int argc, const char **argv) {
         str = strtok(NULL, ",");
         int dest = std::stoi(str);
         str = strtok(NULL, ",");
-        int weight = std::stoi(str);
+        float weight = std::stof(str);
         edge newEdge;
         newEdge.dest = dest;
         newEdge.weight = weight;
@@ -101,7 +101,7 @@ int main(int argc, const char **argv) {
     // Testing
     Timer t;
     t.reset();
-    std::vector<int> output;
+    std::vector<float> output;
     // Call algorithm here
     double elapsed = t.elapsed();
     printf("Test Graph Loading: %.4f\n", elapsed);
