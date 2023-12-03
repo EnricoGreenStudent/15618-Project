@@ -25,8 +25,8 @@ class ParallelDeltaStepping : public SSSPSolver {
   // Updating fields
   std::vector<float> distance;
   std::vector<std::set<int>> buckets; // can use unordered_set for O(1) randomized?
-  const std::vector<std::mutex> bucketLocks; // TODO: this probably runs into issues might need to do the same thing
-  const std::vector<std::mutex> vertexLocks;
+  std::vector<std::mutex> bucketLocks; // TODO: this probably runs into issues might need to do the same thing
+  std::vector<std::mutex> vertexLocks;
 
   /**
    * Get the new bucket number for the given distance
