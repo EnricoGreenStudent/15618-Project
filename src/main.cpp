@@ -10,7 +10,7 @@
 void testGraphLoading(graph g) {
     for(int i = 0; i < g.vertices.size(); i++) {
         for(int j = 0; j < g.vertices[i].size(); j++) {
-            printf("%d %d %d\n", i, g.vertices[i][j].dest, g.vertices[i][j].weight);
+            printf("%d %d %f\n", i, g.vertices[i][j].dest, g.vertices[i][j].weight);
         }
     }
 }

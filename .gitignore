@@ -3,3 +3,9 @@
 
 # vscode
 .vscode/
+
+# outputs
+bellman
+dijkstra
+delta-step
+tester
