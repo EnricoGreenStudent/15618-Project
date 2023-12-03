@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <iostream>
+#include <mutex>
 #include <vector>
+#include <set>
 #include <math.h>
 #include "solver.h"
 
@@ -15,13 +17,31 @@ class ParallelDeltaStepping : public SSSPSolver {
   // Constant values, in shared memory
   int source;
   int numVertices;
-  float delta;
   std::vector<std::vector<edge>> edges;
+  // Preprocessed data
+  float delta;
   std::vector<std::vector<edge>> lightEdges;
   std::vector<std::vector<edge>> heavyEdges;
+  // Updating fields
+  std::vector<float> distance;
+  std::vector<std::set<int>> buckets; // can use unordered_set for O(1) randomized?
+  const std::vector<std::mutex> bucketLocks; // TODO: this probably runs into issues might need to do the same thing
+  const std::vector<std::mutex> vertexLocks;
 
-  std::vector<request> findRequests(std::vector<int> bucket, std::vector<float> &distance, EdgeType type) {
+  /**
+   * Get the new bucket number for the given distance
+  */
+  int getBucketNum(float distance) {
+    return (int) (distance / delta);
+  }
+
+  /**
+   * @param[in] bucketnum bucket index
+   * @param[in] type light or heavy
+  */
+  std::vector<request> findRequests(int bucketNum, EdgeType type) {
     std::vector<request> requests;
+    std::set<int> &bucket = buckets[bucketNum];
     for (int u : bucket) {
       std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
       for (edge &e : searchEdges[u]) {
@@ -29,6 +49,29 @@ class ParallelDeltaStepping : public SSSPSolver {
         float w = e.weight;
         requests.push_back(std::make_pair(v, w));
       }
+    }
+  }
+
+  void relaxRequests(std::vector<request> &requests) {
+    for (request &req : requests) {
+      int v = req.first;
+      float dist = req.second;
+      // find new min and add to bucket
+      // lock vertex
+      vertexLocks[v].lock();
+      if (dist < distance[v]) {
+        int oldBucketNum = getBucketNum(distance[v]);
+        int newBucketNum = getBucketNum(dist);
+        distance[v] = dist;
+        // lock buckets and move v
+        bucketLocks[oldBucketNum].lock();
+        buckets[oldBucketNum].erase(v);
+        bucketLocks[oldBucketNum].unlock();
+        bucketLocks[newBucketNum].lock();
+        buckets[newBucketNum].insert(v);
+        bucketLocks[newBucketNum].unlock();
+      }
+      vertexLocks[v].unlock();
     }
   }
 
