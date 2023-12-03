@@ -20,6 +20,7 @@ class ParallelDeltaStepping : public SSSPSolver {
   std::vector<std::vector<edge>> edges;
   // Preprocessed data
   float delta;
+  int numBuckets;
   std::vector<std::vector<edge>> lightEdges;
   std::vector<std::vector<edge>> heavyEdges;
   // Updating fields
@@ -32,7 +33,7 @@ class ParallelDeltaStepping : public SSSPSolver {
    * Get the new bucket number for the given distance
   */
   int getBucketNum(float distance) {
-    return (int) (distance / delta);
+    return (int) (distance / delta) % (numBuckets * delta);
   }
 
   /**
@@ -82,6 +83,7 @@ public:
     this->edges = edges;
     // TODO: choose a good delta somehow?
     this->delta = 1;
+    float heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
     lightEdges.resize(numVertices);
@@ -90,6 +92,9 @@ public:
       for (edge &e : edges[u]) {
         int v = e.dest;
         float w = e.weight;
+        if (w > heaviestEdgeWeight) {
+          heaviestEdgeWeight = w;
+        }
         if (w <= delta) {
           this->lightEdges[v].push_back(e);
         } else {
@@ -97,6 +102,7 @@ public:
         }
       }
     }
+    this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     // TODO: take the lowest non-empty bucket
     distance[source] = 0;
   }
