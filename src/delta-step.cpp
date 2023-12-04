@@ -34,7 +34,7 @@ class ParallelDeltaStepping : public SSSPSolver {
    * Get the new bucket number for the given distance
   */
   int getBucketNum(float distance) {
-    return (int) (distance / delta) % (numBuckets * delta);
+    return (int) (distance / delta) % numBuckets;
   }
 
   /**
@@ -64,6 +64,7 @@ class ParallelDeltaStepping : public SSSPSolver {
     std::map<int, float> minDists;
     // to parallelize, split the nodes among processes (one split at the start?)
     // maybe keep track of local minDists and reduction to get min for each index
+    #pragma omp parallel for
     for (int u : nodes) {
       std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
       for (edge &e : searchEdges[u]) {
@@ -122,9 +123,9 @@ public:
           heaviestEdgeWeight = w;
         }
         if (w <= delta) {
-          this->lightEdges[v].push_back(e);
+          lightEdges[v].push_back(e);
         } else {
-          this->heavyEdges[v].push_back(e);
+          heavyEdges[v].push_back(e);
         }
       }
     }
@@ -133,13 +134,20 @@ public:
     bucketLocks.resize(numBuckets);
     distance[source] = 0;
     // TODO: Relax source vertex
-    int lastEmptiedBucket = this->numBuckets - 1;
+    int lastEmptiedBucket = numBuckets - 1;
     int currentBucket = 0;
     while(currentBucket != lastEmptiedBucket) {
-      if (!this->buckets[currentBucket].empty()) {
+      if (!buckets[currentBucket].empty()) {
+        std::vector<request> requests;
         std::set<int> deletedNodes;
         // Inner loop
-        std::vector<request> requests = findRequests(deletedNodes, HEAVY);
+        while (!buckets[currentBucket].empty()) {
+          requests = findRequests(buckets[currentBucket], LIGHT);
+          deletedNodes.insert(deletedNodes.begin(), deletedNodes.end());
+          buckets[currentBucket].clear();
+          relaxRequests(requests);
+        }
+        requests = findRequests(deletedNodes, HEAVY);
         relaxRequests(requests);
         lastEmptiedBucket = currentBucket;
       }
