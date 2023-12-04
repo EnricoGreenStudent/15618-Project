@@ -49,6 +49,7 @@ class ParallelDeltaStepping : public SSSPSolver {
       for (edge &e : searchEdges[u]) {
         int v = e.dest;
         float w = e.weight;
+        printf("findRequests on %d: Added (%d, %f)\n", u, v, w);
         requests.push_back(std::make_pair(v, distance[u] + w));
       }
     }
@@ -97,6 +98,7 @@ class ParallelDeltaStepping : public SSSPSolver {
           bucketLocks[oldBucketNum].unlock();
         }
         distance[v] = dist;
+        printf("Relaxed %d to new weight %f, adding to bucket %d\n", v, dist, newBucketNum);
         bucketLocks[newBucketNum].lock();
         buckets[newBucketNum].insert(v);
         bucketLocks[newBucketNum].unlock();
@@ -130,14 +132,13 @@ public:
         }
       }
     }
-    this->delta = heaviestEdgeWeight / 5;
+    this->delta = heaviestEdgeWeight;
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     std::mutex bucketLocks[numBuckets];
     std::mutex vertexLocks[numVertices];
     buckets.resize(numBuckets);
     distance[source] = 0;
     buckets[0].insert(0);
-    // TODO: Relax source vertex
     int lastEmptiedBucket = numBuckets - 1;
     int currentBucket = 0;
     int counter = 0;
@@ -152,6 +153,7 @@ public:
           deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
           buckets[currentBucket].clear();
           relaxRequests(requests, bucketLocks, vertexLocks, distance);
+          printf("After relaxation, set has size %ld\n", buckets[currentBucket].size());
         }
         requests = findRequests(deletedNodes, HEAVY, distance);
         relaxRequests(requests, bucketLocks, vertexLocks, distance);

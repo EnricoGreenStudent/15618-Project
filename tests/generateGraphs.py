@@ -51,10 +51,12 @@ def generateTree(numVertices, maxEdgeWeight, testName):
 # random - 50k vertices, 100k edges
 generateEdgeList(50000, 100000, 50, "random")
 # complete - 250 vertices
-generateCompleteGraph(250, 1, "complete")
+generateCompleteGraph(250, 250, "complete")
 # cycle - 100k vertices
 generateCycle(100000, 1, "cycle")
 # tree - 100k vertices
 generateTree(100000, 1, "tree")
 # shortTests - quick sanity test, 5 vertices, 10 edges
 generateEdgeList(5, 10, 5, "shortTest")
+
+generateEdgeList(1000, 30000, 50, "random-1k")

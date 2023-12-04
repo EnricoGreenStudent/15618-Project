@@ -37,6 +37,16 @@ void saveResults(std::vector<float> dists, std::string fileName) {
     file.close();
 }
 
+void savePred(std::vector<int> preds, std::string fileName) {
+    std::ofstream file(fileName);
+    for(int i = 0; i < preds.size(); i++) {
+        file << std::to_string(i);
+        file << ": ";
+        file << std::to_string(preds[i]);
+        file << "\n";
+    }
+    file.close();
+}
 // Compares two files line-by-line to check if they contain the same contents. Used to check the output files for correctness.
 bool checkCorrectness(std::string fileAName, std::string fileBName) {
     std::ifstream fileA(fileAName, std::ifstream::in);
@@ -117,8 +127,8 @@ void deltaStepBenchmark(graph g) {
     t.reset();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
-    saveResults(distance, "out1.txt");
-    bool correct = checkCorrectness("out-ref.txt", "out1.txt");
+    saveResults(distance, "out.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out.txt");
     if(correct) {
         printf("Delta Stepping Runtime: %.4f\n", elapsed);
     } else {
@@ -163,22 +173,6 @@ int main(int argc, const char **argv) {
         g.vertices[src].push_back(newEdge);
     }
     file.close();
-    // Testing
-    /*
-    Timer t;
-    t.reset();
-    std::vector<float> output;
-    // Call algorithm here
-    double elapsed = t.elapsed();
-    printf("Test Graph Loading: %.4f\n", elapsed);
-    saveResults(output, "out.txt");
-    bool correct = checkCorrectness("out.txt", "ref.txt"); // Replace ref.txt with name of reference solution
-    // Note: Reference solution will probably have to be dijkstra's output
-    if(correct) {
-        printf("Output correct\n");
-    } else {
-        printf("Output incorrect\n");
-    }*/
     dijkstraBenchmark(g);
     bellmanForwardBenchmark(g);
     bellmanBackwardBenchmark(g);
