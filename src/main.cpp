@@ -75,6 +75,56 @@ void dijkstraBenchmark(graph g) {
     saveResults(distance, "out-ref.txt");
 }
 
+void bellmanForwardBenchmark(graph g) {
+    Timer t;
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    ParallelBellmanFordForward solver;
+    t.reset();
+    solver.bellmanFord(0, g.vertices, distance, predecessor);
+    double elapsed = t.elapsed();
+    saveResults(distance, "out.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out.txt");
+    if(correct) {
+        printf("Forward Bellman-Ford Runtime: %.4f\n", elapsed);
+    } else {
+        printf("Forward Bellman-Ford Incorrect\n");
+    }
+}
+
+void bellmanBackwardBenchmark(graph g) {
+    Timer t;
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    ParallelBellmanFordBackward solver;
+    t.reset();
+    solver.bellmanFord(0, g.vertices, distance, predecessor);
+    double elapsed = t.elapsed();
+    saveResults(distance, "out.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out.txt");
+    if(correct) {
+        printf("Backward Bellman-Ford Runtime: %.4f\n", elapsed);
+    } else {
+        printf("Backward Bellman-Ford Incorrect\n");
+    }
+}
+
+void deltaStepBenchmark(graph g) {
+    Timer t;
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    ParallelDeltaStepping solver;
+    t.reset();
+    solver.solve(0, g.vertices, distance, predecessor);
+    double elapsed = t.elapsed();
+    saveResults(distance, "out1.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out1.txt");
+    if(correct) {
+        printf("Delta Stepping Runtime: %.4f\n", elapsed);
+    } else {
+        printf("Delta Stepping Incorrect\n");
+    }
+}
 // Main testing function
 int main(int argc, const char **argv) {
     // Parse commandline arguments, reject if no argument given (should give exactly one, which is a file name)
@@ -130,5 +180,8 @@ int main(int argc, const char **argv) {
         printf("Output incorrect\n");
     }*/
     dijkstraBenchmark(g);
+    bellmanForwardBenchmark(g);
+    bellmanBackwardBenchmark(g);
+    deltaStepBenchmark(g);
     return(0);
 }
