@@ -28,10 +28,7 @@ class ParallelDeltaStepping : public SSSPSolver {
   std::vector<std::vector<edge>> lightEdges;
   std::vector<std::vector<edge>> heavyEdges;
   // Updating fields
-  std::vector<float> distance;
   std::vector<std::set<int>> buckets; // can use unordered_set for O(1) randomized?
-  std::vector<std::mutex> bucketLocks; // TODO: this probably runs into issues might need to do the same thing
-  std::vector<std::mutex> vertexLocks;
 
   /**
    * Get the new bucket number for the given distance
@@ -45,8 +42,8 @@ class ParallelDeltaStepping : public SSSPSolver {
    * @param[in] type light or heavy
    * @return list of requests
   */
-  std::vector<request> findRequests(std::set<int> &nodes, EdgeType type) {
-    std::vector<request> requests(numVertices);
+  std::vector<request> findRequests(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
+    std::vector<request> requests;
     for (int u : nodes) {
       std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
       for (edge &e : searchEdges[u]) {
@@ -63,11 +60,11 @@ class ParallelDeltaStepping : public SSSPSolver {
    * @param[out] updated set of destination nodes that have 
    * @return lowest distance found among requests to each vertex
   */
-  std::map<int, float> findMinNewDists(std::set<int> &nodes, EdgeType type) {
+  std::map<int, float> findMinNewDists(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
     std::map<int, float> minDists;
     // to parallelize, split the nodes among processes (one split at the start?)
     // maybe keep track of local minDists and reduction to get min for each index
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for (int u : nodes) {
       std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
       for (edge &e : searchEdges[u]) {
@@ -82,7 +79,8 @@ class ParallelDeltaStepping : public SSSPSolver {
     return minDists;
   }
 
-  void relaxRequests(std::vector<request> &requests) {
+  void relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
+    // #pragma omp parallel for
     for (request &req : requests) {
       int v = req.first;
       float dist = req.second;
@@ -92,11 +90,13 @@ class ParallelDeltaStepping : public SSSPSolver {
       if (dist < distance[v]) {
         int oldBucketNum = getBucketNum(distance[v]);
         int newBucketNum = getBucketNum(dist);
-        distance[v] = dist;
         // lock buckets and move v
-        bucketLocks[oldBucketNum].lock();
-        buckets[oldBucketNum].erase(v);
-        bucketLocks[oldBucketNum].unlock();
+        if (distance[v] != INFINITY) {
+          bucketLocks[oldBucketNum].lock();
+          buckets[oldBucketNum].erase(v);
+          bucketLocks[oldBucketNum].unlock();
+        }
+        distance[v] = dist;
         bucketLocks[newBucketNum].lock();
         buckets[newBucketNum].insert(v);
         bucketLocks[newBucketNum].unlock();
@@ -111,11 +111,9 @@ public:
     this->numVertices = edges.size();
     this->edges = edges;
     // TODO: choose a good delta somehow?
-    this->delta = 1;
     float heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
-    vertexLocks.resize(numVertices);
     lightEdges.resize(numVertices);
     heavyEdges.resize(numVertices);
     for (int u = 0; u < numVertices; u++) {
@@ -126,32 +124,37 @@ public:
           heaviestEdgeWeight = w;
         }
         if (w <= delta) {
-          lightEdges[v].push_back(e);
+          lightEdges[u].push_back(e);
         } else {
-          heavyEdges[v].push_back(e);
+          heavyEdges[u].push_back(e);
         }
       }
     }
+    this->delta = heaviestEdgeWeight / 5;
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
+    std::mutex bucketLocks[numBuckets];
+    std::mutex vertexLocks[numVertices];
     buckets.resize(numBuckets);
-    bucketLocks.resize(numBuckets);
     distance[source] = 0;
+    buckets[0].insert(0);
     // TODO: Relax source vertex
     int lastEmptiedBucket = numBuckets - 1;
     int currentBucket = 0;
+    int counter = 0;
     while(currentBucket != lastEmptiedBucket) {
+      counter += 1;
       if (!buckets[currentBucket].empty()) {
         std::vector<request> requests;
         std::set<int> deletedNodes;
         // Inner loop
         while (!buckets[currentBucket].empty()) {
-          requests = findRequests(buckets[currentBucket], LIGHT);
-          deletedNodes.insert(deletedNodes.begin(), deletedNodes.end());
+          requests = findRequests(buckets[currentBucket], LIGHT, distance);
+          deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
           buckets[currentBucket].clear();
-          relaxRequests(requests);
+          relaxRequests(requests, bucketLocks, vertexLocks, distance);
         }
-        requests = findRequests(deletedNodes, HEAVY);
-        relaxRequests(requests);
+        requests = findRequests(deletedNodes, HEAVY, distance);
+        relaxRequests(requests, bucketLocks, vertexLocks, distance);
         lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
@@ -162,7 +165,7 @@ public:
     deltaStep(source, edges, distance, predecessor);
   }
 };
-
+/*
 int main() {
   std::vector<std::vector<edge>> edges;
   std::vector<std::vector<edge>> incomingEdges;
@@ -186,3 +189,4 @@ int main() {
     std::cout << "vert " << u << " dist " << distance[u] << " pred " << predecessor[u] << "\n";
   }
 }
+*/
