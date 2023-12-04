@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <vector>
 #include <set>
@@ -37,20 +38,44 @@ class ParallelDeltaStepping : public SSSPSolver {
   }
 
   /**
-   * @param[in] bucketnum bucket index
+   * @param[in] nodes vertices to process
    * @param[in] type light or heavy
+   * @return list of requests
   */
-  std::vector<request> findRequests(int bucketNum, EdgeType type) {
-    std::vector<request> requests;
-    std::set<int> &bucket = buckets[bucketNum];
-    for (int u : bucket) {
+  std::vector<request> findRequests(std::set<int> &nodes, EdgeType type) {
+    std::vector<request> requests(numVertices);
+    for (int u : nodes) {
       std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
       for (edge &e : searchEdges[u]) {
         int v = e.dest;
         float w = e.weight;
-        requests.push_back(std::make_pair(v, w));
+        requests.push_back(std::make_pair(v, distance[u] + w));
       }
     }
+    return requests;
+  }
+
+  /**
+   * Like findRequests but directly finds the lowest distance among the requests
+   * @param[out] updated set of destination nodes that have 
+   * @return lowest distance found among requests to each vertex
+  */
+  std::map<int, float> findMinNewDists(std::set<int> &nodes, EdgeType type) {
+    std::map<int, float> minDists;
+    // to parallelize, split the nodes among processes (one split at the start?)
+    // maybe keep track of local minDists and reduction to get min for each index
+    for (int u : nodes) {
+      std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
+      for (edge &e : searchEdges[u]) {
+        int v = e.dest;
+        float w = e.weight;
+        float newDist = distance[u] + w;
+        if (newDist < minDists[v]) {
+          minDists[v] = newDist;
+        }
+      }
+    }
+    return minDists;
   }
 
   void relaxRequests(std::vector<request> &requests) {
@@ -86,6 +111,7 @@ public:
     float heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
+    vertexLocks.resize(numVertices);
     lightEdges.resize(numVertices);
     heavyEdges.resize(numVertices);
     for (int u = 0; u < numVertices; u++) {
@@ -103,6 +129,8 @@ public:
       }
     }
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
+    buckets.resize(numBuckets);
+    bucketLocks.resize(numBuckets);
     // TODO: take the lowest non-empty bucket
     distance[source] = 0;
   }
