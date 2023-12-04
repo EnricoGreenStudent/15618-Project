@@ -131,8 +131,20 @@ public:
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     buckets.resize(numBuckets);
     bucketLocks.resize(numBuckets);
-    // TODO: take the lowest non-empty bucket
     distance[source] = 0;
+    // TODO: Relax source vertex
+    int lastEmptiedBucket = this->numBuckets - 1;
+    int currentBucket = 0;
+    while(currentBucket != lastEmptiedBucket) {
+      if (!this->buckets[currentBucket].empty()) {
+        std::set<int> deletedNodes;
+        // Inner loop
+        std::vector<request> requests = findRequests(deletedNodes, HEAVY);
+        relaxRequests(requests);
+        lastEmptiedBucket = currentBucket;
+      }
+      currentBucket = (currentBucket + 1) % this->numBuckets;
+    }
   }
 
   void solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) override {
