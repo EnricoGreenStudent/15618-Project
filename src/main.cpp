@@ -3,8 +3,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include "graph.h"
 #include "timing.h"
+#include "dijkstra.cpp"
+#include "bellman_forward.cpp"
+#include "bellman_backward.cpp"
+#include "delta-step.cpp"
 
 // Prints a list of edges in the graph. Used for testing
 void testGraphLoading(graph g) {
@@ -60,6 +63,18 @@ bool checkCorrectness(std::string fileAName, std::string fileBName) {
     return true;
 }
 
+void dijkstraBenchmark(graph g) {
+    Timer t;
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    Dijkstra solver;
+    t.reset();
+    solver.dijkstra(0, g.vertices, distance, predecessor);
+    double elapsed = t.elapsed();
+    printf("Dijkstra Runtime: %.4f\n", elapsed);
+    saveResults(distance, "out-ref.txt");
+}
+
 // Main testing function
 int main(int argc, const char **argv) {
     // Parse commandline arguments, reject if no argument given (should give exactly one, which is a file name)
@@ -99,6 +114,7 @@ int main(int argc, const char **argv) {
     }
     file.close();
     // Testing
+    /*
     Timer t;
     t.reset();
     std::vector<float> output;
@@ -112,6 +128,7 @@ int main(int argc, const char **argv) {
         printf("Output correct\n");
     } else {
         printf("Output incorrect\n");
-    }
+    }*/
+    dijkstraBenchmark(g);
     return(0);
 }

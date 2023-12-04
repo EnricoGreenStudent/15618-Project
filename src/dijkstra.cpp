@@ -3,7 +3,10 @@
 #include <vector>
 #include <queue>
 #include <math.h>
+#ifndef SOLVER_HEADER
+#define SOLVER_HEADER
 #include "solver.h"
+#endif
 
 class Dijkstra : public SSSPSolver {
   // Constant values, in shared memory
@@ -32,6 +35,7 @@ public:
             if (distance[u] + w < distance[v]) {
                 distance[v] = distance[u] + w;
                 predecessor[v] = u;
+                pq.push(std::make_pair(distance[v], v));
             }
         }
     }
@@ -42,7 +46,7 @@ public:
   }
 };
 
-int main() {
+/*int main() {
   std::vector<std::vector<edge>> edges;
   std::vector<std::vector<edge>> incomingEdges;
   int numVertices, numEdges, source;
@@ -64,4 +68,4 @@ int main() {
   for (int u = 0; u < numVertices; u++) {
     std::cout << "vert " << u << " dist " << distance[u] << " pred " << predecessor[u] << "\n";
   }
-}
+}*/
