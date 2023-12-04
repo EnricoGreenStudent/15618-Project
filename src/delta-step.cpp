@@ -5,7 +5,10 @@
 #include <vector>
 #include <set>
 #include <math.h>
+#ifndef SOLVER_HEADER
+#define SOLVER_HEADER
 #include "solver.h"
+#endif
 
 typedef std::pair<int, float> request;
 

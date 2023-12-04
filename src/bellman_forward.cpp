@@ -3,9 +3,12 @@
 #include <vector>
 #include <math.h>
 #include <mutex>
+#ifndef SOLVER_HEADER
+#define SOLVER_HEADER
 #include "solver.h"
+#endif
 
-class ParallelBellmanFord : public SSSPSolver {
+class ParallelBellmanFordForward : public SSSPSolver {
   // Constant values, in shared memory
   int source;
   int numVertices;
@@ -74,7 +77,7 @@ public:
     bellmanFord(source, edges, distance, predecessor);
   }
 };
-
+/*
 int main() {
   std::vector<std::vector<edge>> edges;
   std::vector<std::vector<edge>> incomingEdges;
@@ -91,10 +94,11 @@ int main() {
   }
   std::vector<float> distance(numVertices, INFINITY);
   std::vector<int> predecessor(numVertices, -1);
-  ParallelBellmanFord solver;
+  ParallelBellmanFordForward solver;
   solver.bellmanFord(source, edges, distance, predecessor);
   // print results
   for (int u = 0; u < numVertices; u++) {
     std::cout << "vert " << u << " dist " << distance[u] << " pred " << predecessor[u] << "\n";
   }
 }
+*/
