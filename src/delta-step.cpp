@@ -80,7 +80,7 @@ class ParallelDeltaStepping : public SSSPSolver {
   }
 
   void relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
-    // #pragma omp parallel for
+    #pragma omp parallel for
     for (request &req : requests) {
       int v = req.first;
       float dist = req.second;
@@ -110,7 +110,6 @@ public:
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
-    // TODO: choose a good delta somehow?
     float heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
@@ -124,7 +123,7 @@ public:
         }
       }
     }
-    this->delta = 10;
+    this->delta = heaviestEdgeWeight / 10;
     for (int u = 0; u < numVertices; u++) {
       for (edge &e : edges[u]) {
         int v = e.dest;
@@ -136,7 +135,6 @@ public:
         }
       }
     }
-    this->delta = heaviestEdgeWeight;
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     std::mutex bucketLocks[numBuckets];
     std::mutex vertexLocks[numVertices];

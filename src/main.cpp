@@ -174,7 +174,7 @@ int main(int argc, const char **argv) {
     }
     file.close();
     dijkstraBenchmark(g);
-    bellmanForwardBenchmark(g);
+    // bellmanForwardBenchmark(g);
     bellmanBackwardBenchmark(g);
     deltaStepBenchmark(g);
     return(0);
