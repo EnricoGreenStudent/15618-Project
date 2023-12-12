@@ -6,6 +6,7 @@
 #ifndef SOLVER_HEADER
 #define SOLVER_HEADER
 #include "solver.h"
+#include "timing.h"
 #endif
 
 class ParallelBellmanFordForward : public SSSPSolver {

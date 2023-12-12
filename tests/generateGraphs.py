@@ -48,6 +48,20 @@ def generateTree(numVertices, maxEdgeWeight, testName):
         f.write(edgeRepresentation)
     f.close()
 
+def generateRegularGraph(numVertices, regularity, maxEdgeWeight, testName):
+    fileName = testName + ".txt"
+    f = open(fileName, "w")
+    f.write(str(numVertices) + "\n")
+    for i in range(numVertices - 1):
+        for j in range(regularity):
+            weight = random.randrange(maxEdgeWeight) + 1
+            otherVertex = random.randrange(numVertices)
+            edgeRepresentation = str(i + 1) + "," + str(otherVertex) + "," + str(weight) + "\n"
+            f.write(edgeRepresentation)
+            edgeRepresentation = str(otherVertex) + "," + str(i+1) + "," + str(weight) + "\n"
+            f.write(edgeRepresentation)
+    f.close()
+
 # random
 generateEdgeList(1000, 30000, 50, "random-1k")
 generateEdgeList(20000, 50000, 50, "random-20k")
@@ -58,6 +72,7 @@ generateCompleteGraph(250, 250, "complete")
 generateCycle(100000, 1, "cycle")
 # tree - 100k vertices
 generateTree(100000, 1, "tree")
+# regular
+generateRegularGraph(5000, 16, 50, "regular-5k")
 # shortTests - quick sanity test, 5 vertices, 10 edges
 generateEdgeList(5, 10, 5, "shortTest")
-
