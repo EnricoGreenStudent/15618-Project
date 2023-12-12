@@ -48,6 +48,7 @@ class ParallelDeltaStepping : public SSSPSolver {
     std::mutex requestsLock;
     #pragma omp parallel
     #pragma omp single nowait
+    // Idea: increase granularity of tasks by passing multiple nodes at once in order to reduce contention on requests vector
     for (int u : nodes) {
       #pragma omp task
       findOneRequest(u, type, distance, requests, requestsLock);
