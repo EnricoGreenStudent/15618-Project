@@ -8,6 +8,7 @@
 #ifndef SOLVER_HEADER
 #define SOLVER_HEADER
 #include "solver.h"
+#include "timing.h"
 #endif
 
 typedef std::pair<int, float> request;
@@ -44,15 +45,31 @@ class ParallelDeltaStepping : public SSSPSolver {
   */
   std::vector<request> findRequests(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
     std::vector<request> requests;
+    std::mutex requestsLock;
+    #pragma omp parallel
+    #pragma omp single nowait
     for (int u : nodes) {
-      std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
-      for (edge &e : searchEdges[u]) {
-        int v = e.dest;
-        float w = e.weight;
-        requests.push_back(std::make_pair(v, distance[u] + w));
-      }
+      #pragma omp task
+      findOneRequest(u, type, distance, requests, requestsLock);
     }
+    #pragma omp taskwait
     return requests;
+  }
+
+  /**
+  * Helper function for findRequests -- finds all the requests for a single node
+  */
+  void findOneRequest(int u, EdgeType type, std::vector<float> &distance, std::vector<request> &requests, std::mutex &requestsLock) {
+    std::vector<request> req;
+    std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
+    for (edge &e : searchEdges[u]) {
+      int v = e.dest;
+      float w = e.weight;
+      req.push_back(std::make_pair(v, distance[u] + w));
+    }
+    requestsLock.lock();
+    requests.insert(requests.end(), req.begin(), req.end());
+    requestsLock.unlock();
   }
 
   /**
@@ -64,7 +81,6 @@ class ParallelDeltaStepping : public SSSPSolver {
     std::map<int, float> minDists;
     // to parallelize, split the nodes among processes (one split at the start?)
     // maybe keep track of local minDists and reduction to get min for each index
-    // #pragma omp parallel for
     for (int u : nodes) {
       std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
       for (edge &e : searchEdges[u]) {
@@ -115,6 +131,7 @@ public:
     // separate into light and heavy edges
     lightEdges.resize(numVertices);
     heavyEdges.resize(numVertices);
+    #pragma omp parallel for
     for (int u = 0; u < numVertices; u++) {
       for (edge &e : edges[u]) {
         float w = e.weight;
@@ -124,6 +141,7 @@ public:
       }
     }
     this->delta = heaviestEdgeWeight / 10;
+    #pragma omp parallel for
     for (int u = 0; u < numVertices; u++) {
       for (edge &e : edges[u]) {
         int v = e.dest;

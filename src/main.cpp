@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include "timing.h"
 #include "dijkstra.cpp"
 #include "bellman_forward.cpp"
 #include "bellman_backward.cpp"
@@ -98,7 +97,7 @@ void bellmanForwardBenchmark(graph g) {
     if(correct) {
         printf("Forward Bellman-Ford Runtime: %.4f\n", elapsed);
     } else {
-        printf("Forward Bellman-Ford Incorrect\n");
+        printf("Forward Bellman-Ford Incorrect (Runtime: %.4f)\n", elapsed);
     }
 }
 
@@ -115,7 +114,7 @@ void bellmanBackwardBenchmark(graph g) {
     if(correct) {
         printf("Backward Bellman-Ford Runtime: %.4f\n", elapsed);
     } else {
-        printf("Backward Bellman-Ford Incorrect\n");
+        printf("Backward Bellman-Ford Incorrect (Runtime: %.4f)\n", elapsed);
     }
 }
 
@@ -132,7 +131,7 @@ void deltaStepBenchmark(graph g) {
     if(correct) {
         printf("Delta Stepping Runtime: %.4f\n", elapsed);
     } else {
-        printf("Delta Stepping Incorrect\n");
+        printf("Delta Stepping Incorrect (Runtime: %.4f)\n", elapsed);
     }
 }
 // Main testing function
