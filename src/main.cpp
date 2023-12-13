@@ -135,6 +135,24 @@ void deltaStepBenchmark(graph g) {
         printf("Delta Stepping Incorrect (Runtime: %.4f)\n", elapsed);
     }
 }
+
+void deltaStepCudaBenchmark(graph g) {
+    Timer t;
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    ParallelCUDADeltaStepping solver;
+    t.reset();
+    solver.solve(0, g.vertices, distance, predecessor);
+    double elapsed = t.elapsed();
+    saveResults(distance, "out.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out.txt");
+    if(correct) {
+        printf("Delta Stepping CUDA Runtime: %.4f\n", elapsed);
+    } else {
+        printf("Delta Stepping CUDA Incorrect (Runtime: %.4f)\n", elapsed);
+    }
+}
+
 // Main testing function
 int main(int argc, const char **argv) {
     // Parse commandline arguments, reject if no argument given (should give exactly one, which is a file name)
@@ -177,5 +195,6 @@ int main(int argc, const char **argv) {
     // bellmanForwardBenchmark(g);
     bellmanBackwardBenchmark(g);
     deltaStepBenchmark(g);
+    deltaStepCudaBenchmark(g);
     return(0);
 }
