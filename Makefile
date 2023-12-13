@@ -1,5 +1,5 @@
 
-CFLAGS := -Wall -m64
+CFLAGS := -Wall -m64 -fopenmp
 TARGET_BELLMAN := bellman
 TARGET_DIJKSTRA := dijkstra
 TARGETBIN := tester
@@ -12,7 +12,7 @@ CUDAOBJS=$(OBJDIR)/delta-step-cuda.o
 
 .phony: all
 
-all: $(TARGET_BELLMAN) $(TARGET_DIJKSTRA) $(TARGETBIN)
+all: $(TARGETBIN) #$(TARGET_BELLMAN) $(TARGET_DIJKSTRA) $(TARGETBIN)
 
 $(TARGET_BELLMAN):
 	g++ $(CFLAGS) src/bellman.cpp -o $(TARGET_BELLMAN)
@@ -20,15 +20,15 @@ $(TARGET_BELLMAN):
 $(TARGET_DIJKSTRA):
 	g++ $(CFLAGS) src/dijkstra.cpp -o $(TARGET_DIJKSTRA)
 
-$(TARGETBIN):
-	g++ $(CFLAGS) src/main.cpp -o $(TARGETBIN)
+$(TARGETBIN): $(CUDAOBJS)
+	g++ $(CFLAGS) src/main.cpp -o $(TARGETBIN) $(CUDAOBJS) $(LDFLAGS)
 
 # Objects for CUDA compilation
 $(OBJDIR)/%.o: src/%.cu
-    $(NVCC) $< $(NVCCFLAGS) -c -o $@
+	$(NVCC) $< $(NVCCFLAGS) -c -o $@
 
 cuda: $(CUDAOBJS)
 
 
 clean:
-	rm -f $(TARGET_BELLMAN) $(TARGET_DIJKSTRA) $(TARGETBIN)
+	rm -f $(TARGET_BELLMAN) $(TARGET_DIJKSTRA) $(TARGETBIN) $(CUDAOBJS)

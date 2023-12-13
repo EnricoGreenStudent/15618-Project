@@ -7,6 +7,7 @@
 #include "bellman_forward.cpp"
 #include "bellman_backward.cpp"
 #include "delta-step.cpp"
+#include "delta-step-cuda.h"
 
 // Prints a list of edges in the graph. Used for testing
 void testGraphLoading(graph g) {

@@ -5,11 +5,8 @@
 #include <vector>
 #include <set>
 #include <math.h>
-#ifndef SOLVER_HEADER
-#define SOLVER_HEADER
-#include "solver.h"
-#include "timing.h"
-#endif
+
+#include "delta-step-cuda.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -21,23 +18,6 @@
 
 #define THREADS_PER_BLK 256
 
-/**
- * Type definitions
-*/
-
-// typedef std::pair<int, float> request;
-typedef struct request_st {
-  int first;
-  float second;
-  bool operator<(const request_st& other) const {
-    return this->first < other.first || (this->first == other.first && this->second < other.second);
-  }
-} request;
-
-enum EdgeType {
-  LIGHT = 0,
-  HEAVY = 1,
-};
 
 /**
  * Global constants
@@ -76,7 +56,7 @@ __constant__ DeltaSteppingConstants constParams;
 __constant__ DeltaSteppingRelaxParams constRelaxParams;  // Updates outside of device
 
 /**
- * Returns the vertex index to relax for the given thread.
+ * Returns the index among the relaxed vertices for thi thread.
  * 
  * The thread is given the vertices and a cumulative count of
  * the number of relax requests for each vertex in the bucket.
@@ -98,7 +78,7 @@ __device__ int search_edge_index(int* searchOffsets) {
       right = mid;
     }
   }
-  return constRelaxParams.relaxVertices[left - 1];
+  return left - 1;
 }
 
 /**
@@ -114,9 +94,10 @@ __global__ void findRequests(EdgeType type) {
 
   edge* searchEdges = (type == EdgeType::LIGHT) ? constParams.lightEdges : constParams.heavyEdges;
   int* searchOffsets = (type == EdgeType::LIGHT) ? constParams.vLightOffsets : constParams.vHeavyOffsets;
-  int u = search_edge_index(searchOffsets);
+  int searchIndex = search_edge_index(searchOffsets);
+  int u = constRelaxParams.relaxVertices[searchIndex];
   // offset + start of edges for the vertex
-  int edgeNum = (nodeID - constRelaxParams.vRelaxOffsets[left - 1]) + constParams.searchOffsets[u];
+  int edgeNum = (nodeID - constRelaxParams.vRelaxOffsets[searchIndex]) + searchOffsets[u];
   edge &e = searchEdges[edgeNum];
   int v = e.dest;
   float w = e.weight;
@@ -161,99 +142,14 @@ __global__ void collectDistanceUpdates() {
   }
 }
 
-class ParallelDeltaStepping : public SSSPSolver {
-  // Constant values, in shared memory
-  int source;
-  int numVertices;
-  std::vector<std::vector<edge>> edges;
-  // Preprocessed data
-  float delta;
-  int numBuckets;
-  std::vector<std::set<int>> buckets; // can use unordered_set for O(1) randomized?
-  // Constant values, in shared memory
-  std::vector<edge> lightEdges;
-  std::vector<int> vLightOffsets; // start of edges for each vertex in `lightEdges`
-  std::vector<edge> heavyEdges;
-  std::vector<int> vHeavyOffsets; // start of edges for each vertex in `heavyEdge`
-
-  // DeltaSteppingConstants values
-  edge* cuLightEdges;
-  int* cuVLightOffsets;
-  edge* cuHeavyEdges;
-  int* cuVHeavyOffsets;
-  float* cuDistance;
-  request* cuRelaxRequests;
-  int* cuVRelaxOffsets;
-  int* cuRelaxVertices;
-  int* cuRelaxIsMin;
-  request* cuRelaxOutput;
-
   /**
    * Get the new bucket number for the given distance
   */
-  int getBucketNum(float distance) {
+  int ParallelCUDADeltaStepping::getBucketNum(float distance) {
     return (int) (distance / delta) % numBuckets;
   }
 
-  /**
-   * @param[in] nodes vertices to process
-   * @param[in] type light or heavy
-   * @return list of requests
-  std::vector<request> findRequests(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
-    std::vector<request> requests;
-    std::mutex requestsLock;
-    #pragma omp parallel
-    #pragma omp single nowait
-    // Idea: increase granularity of tasks by passing multiple nodes at once in order to reduce contention on requests vector
-    for (int u : nodes) {
-      #pragma omp task
-      findOneRequest(u, type, distance, requests, requestsLock);
-    }
-    #pragma omp taskwait
-    return requests;
-  }
-  */
-
-  /**
-  * Helper function for findRequests -- finds all the requests for a single node
-  void findOneRequest(int u, EdgeType type, std::vector<float> &distance, std::vector<request> &requests, std::mutex &requestsLock) {
-    std::vector<request> req;
-    std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
-    for (edge &e : searchEdges[u]) {
-      int v = e.dest;
-      float w = e.weight;
-      req.push_back(std::make_pair(v, distance[u] + w));
-    }
-    requestsLock.lock();
-    requests.insert(requests.end(), req.begin(), req.end());
-    requestsLock.unlock();
-  }
-  */
-
-  /**
-   * Like findRequests but directly finds the lowest distance among the requests
-   * @param[out] updated set of destination nodes that have 
-   * @return lowest distance found among requests to each vertex
-  std::map<int, float> findMinNewDists(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
-    std::map<int, float> minDists;
-    // to parallelize, split the nodes among processes (one split at the start?)
-    // maybe keep track of local minDists and reduction to get min for each index
-    for (int u : nodes) {
-      std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
-      for (edge &e : searchEdges[u]) {
-        int v = e.dest;
-        float w = e.weight;
-        float newDist = distance[u] + w;
-        if (newDist < minDists[v]) {
-          minDists[v] = newDist;
-        }
-      }
-    }
-    return minDists;
-  }
-  */
-
-  void relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
+  void ParallelCUDADeltaStepping::relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
     #pragma omp parallel for
     for (request &req : requests) {
       int v = req.first;
@@ -279,7 +175,7 @@ class ParallelDeltaStepping : public SSSPSolver {
     }
   }
 
-  void cudaFindRequests(std::set<int> &nodes, std::vector<request> &relaxUpdates, EdgeType type) {
+  void ParallelCUDADeltaStepping::cudaFindRequests(std::set<int> &nodes, std::vector<request> &relaxUpdates, EdgeType type) {
     // Copy bucket vectors, pass the data to device memory
     int bucketSize = nodes.size();
     std::vector<int> curBucket;
@@ -307,7 +203,7 @@ class ParallelDeltaStepping : public SSSPSolver {
 
     DeltaSteppingRelaxParams relaxParams;
     relaxParams.numRequests = curBucketOffset;
-    relaxParams.rumRelaxVertices = bucketSize;
+    relaxParams.numRelaxVertices = bucketSize;
     relaxParams.vRelaxOffsets = cuVRelaxOffsets;
     relaxParams.relaxVertices = cuRelaxVertices;
     relaxParams.relaxRequests = cuRelaxRequests;
@@ -344,9 +240,8 @@ class ParallelDeltaStepping : public SSSPSolver {
     cudaFree(cuRelaxIsMin);
     cudaFree(cuRelaxOutput);
   }
-
-public:
-  void deltaStep(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+  
+  void ParallelCUDADeltaStepping::deltaStep(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
@@ -455,7 +350,7 @@ public:
     cudaFree(cuDistance);
   }
 
-  void solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) override {
+  void ParallelCUDADeltaStepping::solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
     deltaStep(source, edges, distance, predecessor);
   }
-};
+
