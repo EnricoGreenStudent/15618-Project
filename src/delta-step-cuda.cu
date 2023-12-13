@@ -15,9 +15,26 @@
 #include <thrust/sort.h>
 #include <thrust/functional.h>
 #include <thrust/execution_policy.h>
+#include <thrust/device_ptr.h>
 
 #define THREADS_PER_BLK 256
 
+
+#define cudaCheckError(ans) cudaAssert((ans), __FILE__, __LINE__);
+inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+    if (code != cudaSuccess) {
+        fprintf(stderr, "CUDA Error: %s at %s:%d\n",
+        cudaGetErrorString(code), file, line);
+        if (abort) exit(code);
+    }
+    cudaError_t errCode = cudaPeekAtLastError();
+    if (errCode != cudaSuccess) {
+        fprintf(stderr, "CUDA Error: %s at %s:%d\n",
+        cudaGetErrorString(errCode), file, line);
+        if (abort) exit(errCode);
+    }
+}
 
 /**
  * Global constants
@@ -55,6 +72,13 @@ struct DeltaSteppingRelaxParams {
 __constant__ DeltaSteppingConstants constParams;
 __constant__ DeltaSteppingRelaxParams constRelaxParams;  // Updates outside of device
 
+struct ReqCmp {
+  __host__ __device__
+  bool operator()(const cuRequest& o1, const cuRequest& o2) {
+      return o1.first < o2.first || (o1.first == o2.first && o1.second < o2.second);
+  }
+};
+
 /**
  * Returns the index among the relaxed vertices for thi thread.
  * 
@@ -88,7 +112,7 @@ __device__ int search_edge_index(int* searchOffsets) {
 */
 __global__ void findRequests(EdgeType type) {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
-  if (nodeID >= constParams.numVertices) {
+  if (nodeID >= constRelaxParams.numRequests) {
     return;
   }
 
@@ -112,6 +136,7 @@ __global__ void findRequests(EdgeType type) {
  * to minimal distances for that destination vertex.
  * 
  * Pass results into a prefix sum, then use that to fill output.
+ * Also updates the distance values on GPU device memory
 */
 __global__ void getIsMinDistance() {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
@@ -123,11 +148,11 @@ __global__ void getIsMinDistance() {
   int v = constRelaxParams.relaxRequests[nodeID].first;
   if (nodeID == 0 || constRelaxParams.relaxRequests[nodeID - 1].first != v) {
     constRelaxParams.isMin[nodeID] = 1;
+    constParams.distance[v] = constRelaxParams.relaxRequests[nodeID].second;
   }
 }
 
 /**
- * Returns the number of output requests.
  * The thread is given prefix summed values in isMin to use as indices
 */
 __global__ void collectDistanceUpdates() {
@@ -193,13 +218,17 @@ __global__ void collectDistanceUpdates() {
     cudaMalloc(&cuRelaxRequests, curBucketOffset * sizeof(cuRequest));
     cudaMalloc(&cuVRelaxOffsets, (bucketSize+1) * sizeof(int));
     cudaMalloc(&cuRelaxVertices, bucketSize * sizeof(int));
-    cudaMalloc(&cuRelaxIsMin, curBucketOffset * sizeof(int));
+    cudaMalloc(&cuRelaxIsMin, (curBucketOffset+1) * sizeof(int));
     cudaMalloc(&cuRelaxOutput, curBucketOffset * sizeof(cuRequest));
+    cudaCheckError(cudaDeviceSynchronize());
     // Create offsets for all of the vertices in the current bucket
     cudaMemcpy(cuVRelaxOffsets, bucketOffsets.data(), (bucketSize+1) * sizeof(int),
                 cudaMemcpyHostToDevice);
+    cudaCheckError(cudaDeviceSynchronize());
     cudaMemcpy(cuRelaxVertices, curBucket.data(), bucketSize * sizeof(int),
                 cudaMemcpyHostToDevice);
+    cudaCheckError(cudaDeviceSynchronize());
+
 
     DeltaSteppingRelaxParams relaxParams;
     relaxParams.numRequests = curBucketOffset;
@@ -210,28 +239,76 @@ __global__ void collectDistanceUpdates() {
     relaxParams.isMin = cuRelaxIsMin;
     relaxParams.output = cuRelaxOutput;
     cudaMemcpyToSymbol(constRelaxParams, &relaxParams, sizeof(DeltaSteppingRelaxParams));
+    cudaCheckError(cudaDeviceSynchronize());
 
+    printf("relax cuda preprocessing done!\n");
     // Find requests using CUDA
-    int numVertexBlocks = (bucketSize + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
-    findRequests<<<numVertexBlocks, THREADS_PER_BLK>>>(type);
+    //int numVertexBlocks = (bucketSize + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
+    int numReqBlocks = (curBucketOffset + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
+    findRequests<<<numReqBlocks, THREADS_PER_BLK>>>(type);
+    cudaCheckError(cudaDeviceSynchronize());
+    printf("relax findrequests done! numRequests=%d numBlock=%d\n", curBucketOffset, numReqBlocks);
+
+    relaxUpdates.resize(curBucketOffset);
+    cudaMemcpy(relaxUpdates.data(), relaxParams.relaxRequests, curBucketOffset * sizeof(cuRequest), cudaMemcpyDeviceToHost);
+    cudaCheckError(cudaDeviceSynchronize());
+    printf("printing all relax requests\n");
+          for (int i=0; i < 5 && i < (int) relaxUpdates.size(); i++) {
+            printf("request[%d]=(dest=%d, dist=%f)\n", i, relaxUpdates[i].first, relaxUpdates[i].second);
+          }
     // Sort relaxations using thrust
+/*
     thrust::sort(
+      thrust::device,
       relaxParams.relaxRequests,
       relaxParams.relaxRequests + relaxParams.numRequests,
       thrust::less<cuRequest>());
+*/
+    thrust::device_ptr<cuRequest> ptrRelaxRequests(relaxParams.relaxRequests);
+    thrust::sort(
+      ptrRelaxRequests,
+      ptrRelaxRequests + relaxParams.numRequests,
+      ReqCmp());
+    //  thrust::less<cuRequest>());
+    cudaCheckError(cudaDeviceSynchronize());
+    
+    relaxUpdates.resize(curBucketOffset);
+    cudaMemcpy(relaxUpdates.data(), relaxParams.relaxRequests, curBucketOffset * sizeof(cuRequest), cudaMemcpyDeviceToHost);
+    cudaCheckError(cudaDeviceSynchronize());
+    printf("printing sorted relax requests\n");
+          for (int i=0; i < 5 && i < (int) relaxUpdates.size(); i++) {
+            printf("request[%d]=(dest=%d, dist=%f)\n", i, relaxUpdates[i].first, relaxUpdates[i].second);
+          }
+    //printf("relax thrust sort done!\n");
     // Find minimal relaxations
-    int numReqBlocks = (curBucketOffset + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
     getIsMinDistance<<<numReqBlocks, THREADS_PER_BLK>>>();
+    cudaCheckError(cudaDeviceSynchronize());
+    //printf("relax is min done!\n");
     // Get prefix sums using thrust
-    thrust::exclusive_scan(relaxParams.isMin, relaxParams.isMin + relaxParams.numRequests, relaxParams.isMin);
+    thrust::device_ptr<int> ptrIsMin(relaxParams.isMin);
+/*
+    thrust::exclusive_scan(
+      thrust::device,
+      relaxParams.isMin, 
+      relaxParams.isMin + relaxParams.numRequests + 1,
+      relaxParams.isMin);
+*/
+    thrust::exclusive_scan(ptrIsMin, ptrIsMin + relaxParams.numRequests + 1, ptrIsMin);
+    cudaCheckError(cudaDeviceSynchronize());
+    //printf("relax excl scan done!\n");
     // Collect updates
     collectDistanceUpdates<<<numReqBlocks, THREADS_PER_BLK>>>();
+    cudaCheckError(cudaDeviceSynchronize());
+    //printf("relax collect dist done!\n");
     // Get size of output requests
     int numRelaxUpdates;
-    cudaMemcpy(&numRelaxUpdates, &relaxParams.relaxRequests[curBucketOffset-1], sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&numRelaxUpdates, &relaxParams.isMin[curBucketOffset], sizeof(int), cudaMemcpyDeviceToHost);
+    cudaCheckError(cudaDeviceSynchronize());
     // Copy output to host
     relaxUpdates.resize(numRelaxUpdates);
-    cudaMemcpy(relaxUpdates.data(), &relaxParams.output, numRelaxUpdates * sizeof(cuRequest), cudaMemcpyDeviceToHost);
+    cudaMemcpy(relaxUpdates.data(), relaxParams.output, numRelaxUpdates * sizeof(cuRequest), cudaMemcpyDeviceToHost);
+    cudaCheckError(cudaDeviceSynchronize());
+    printf("relax data copy done! size=%d\n", numRelaxUpdates);
     
     // Free device memory
     cudaFree(cuRelaxRequests);
@@ -239,6 +316,7 @@ __global__ void collectDistanceUpdates() {
     cudaFree(cuRelaxVertices);
     cudaFree(cuRelaxIsMin);
     cudaFree(cuRelaxOutput);
+    cudaCheckError(cudaDeviceSynchronize());
   }
   
   void ParallelCUDADeltaStepping::deltaStep(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
@@ -248,7 +326,7 @@ __global__ void collectDistanceUpdates() {
     float heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for (int u = 0; u < numVertices; u++) {
       for (edge &e : edges[u]) {
         float w = e.weight;
@@ -277,6 +355,9 @@ __global__ void collectDistanceUpdates() {
     }
     vLightOffsets.push_back(lightIndex);
     vHeavyOffsets.push_back(heavyIndex);
+    
+    distance[source] = 0;
+    printf("preprocessing done!\n");
 
     // Initialize CUDA memory for constant params
     cudaMalloc(&cuLightEdges, lightEdges.size() * sizeof(edge));
@@ -295,6 +376,12 @@ __global__ void collectDistanceUpdates() {
     cudaMemcpy(cuDistance, distance.data(), numVertices * sizeof(float),
                cudaMemcpyHostToDevice);
 
+    cudaError_t errCode = cudaPeekAtLastError();
+    if (errCode != cudaSuccess) {
+        fprintf(stderr, "WARNING: A CUDA error occured: code=%d, %s\n", errCode, cudaGetErrorString(errCode));
+    }
+    printf("cuda mallocs done!\n");
+
     DeltaSteppingConstants params;
     params.source = source;
     params.numVertices = numVertices;
@@ -306,13 +393,17 @@ __global__ void collectDistanceUpdates() {
     params.vHeavyOffsets = cuVHeavyOffsets;
     params.distance = cuDistance;
     cudaMemcpyToSymbol(constParams, &params, sizeof(DeltaSteppingConstants));
+    errCode = cudaPeekAtLastError();
+    if (errCode != cudaSuccess) {
+        fprintf(stderr, "WARNING: A CUDA error occured: code=%d, %s\n", errCode, cudaGetErrorString(errCode));
+    }
+    printf("cuda init done!\n");
 
     // Run algorithm
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     std::mutex bucketLocks[numBuckets];
     std::mutex vertexLocks[numVertices];
     buckets.resize(numBuckets);
-    distance[source] = 0;
     buckets[0].insert(0);
     int lastEmptiedBucket = numBuckets - 1;
     int currentBucket = 0;
@@ -321,22 +412,28 @@ __global__ void collectDistanceUpdates() {
       counter += 1;
       // Repeat light edge relaxations until no vertices placed back in bucket
       if (!buckets[currentBucket].empty()) {
+        printf("non-empty bucket start\n");
         std::vector<cuRequest> requests;
         std::set<int> deletedNodes;
         // Inner loop
         std::vector<cuRequest> relaxUpdates;
         while (!buckets[currentBucket].empty()) {
           cudaFindRequests(buckets[currentBucket], relaxUpdates, LIGHT);
+          printf("cuda find LIGHT requests done!\n");
 
           // Empty current bucket, move all node to new bucket
           deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
           buckets[currentBucket].clear();
+          printf("number of relax updates is %lu\n", relaxUpdates.size());
+          for (int i=0; i < 5 && i < (int) relaxUpdates.size(); i++) {
+            printf("relax[%d]=(dest=%d, dist=%f)\n", i, relaxUpdates[i].first, relaxUpdates[i].second);
+          }
           relaxRequests(relaxUpdates, bucketLocks, vertexLocks, distance);
-          relaxUpdates.clear();
         }
         // requests = findRequests(deletedNodes, HEAVY, distance);
         cudaFindRequests(deletedNodes, relaxUpdates, HEAVY);
-        relaxRequests(requests, bucketLocks, vertexLocks, distance);
+        printf("cuda find HEAVY requests done!\n");
+        relaxRequests(relaxUpdates, bucketLocks, vertexLocks, distance);
         lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
