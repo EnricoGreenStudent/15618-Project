@@ -73,7 +73,7 @@ __constant__ DeltaSteppingConstants constParams;
 __constant__ DeltaSteppingRelaxParams constRelaxParams;  // Updates outside of device
 
 struct ReqCmp {
-  __host__ __device__
+  __device__
   bool operator()(const cuRequest& o1, const cuRequest& o2) {
       return o1.first < o2.first || (o1.first == o2.first && o1.second < o2.second);
   }
@@ -89,7 +89,7 @@ struct ReqCmp {
  * handle, then find which edge of that vertex thread should
  * process for the relaxation.
 */
-__device__ int search_edge_index(int* searchOffsets) {
+__device__ __inline__ int search_edge_index() {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
 
   int left = 0;
@@ -118,7 +118,7 @@ __global__ void findRequests(EdgeType type) {
 
   edge* searchEdges = (type == EdgeType::LIGHT) ? constParams.lightEdges : constParams.heavyEdges;
   int* searchOffsets = (type == EdgeType::LIGHT) ? constParams.vLightOffsets : constParams.vHeavyOffsets;
-  int searchIndex = search_edge_index(searchOffsets);
+  int searchIndex = search_edge_index();
   int u = constRelaxParams.relaxVertices[searchIndex];
   // offset + start of edges for the vertex
   int edgeNum = (nodeID - constRelaxParams.vRelaxOffsets[searchIndex]) + searchOffsets[u];
@@ -146,9 +146,12 @@ __global__ void getIsMinDistance() {
 
   constRelaxParams.isMin[nodeID] = 0;
   int v = constRelaxParams.relaxRequests[nodeID].first;
+  float dist = constRelaxParams.relaxRequests[nodeID].second;
   if (nodeID == 0 || constRelaxParams.relaxRequests[nodeID - 1].first != v) {
-    constRelaxParams.isMin[nodeID] = 1;
-    constParams.distance[v] = constRelaxParams.relaxRequests[nodeID].second;
+    if (dist < constParams.distance[v]) {
+      constParams.distance[v] = dist;
+      constRelaxParams.isMin[nodeID] = 1;
+    }
   }
 }
 
@@ -162,7 +165,7 @@ __global__ void collectDistanceUpdates() {
   }
 
   int outputIndex = constRelaxParams.isMin[nodeID];
-  if (nodeID == 0 || constRelaxParams.isMin[nodeID - 1] != outputIndex) {
+  if (constRelaxParams.isMin[nodeID + 1] != outputIndex) {
     constRelaxParams.output[outputIndex] = constRelaxParams.relaxRequests[nodeID];
   }
 }
@@ -191,6 +194,7 @@ __global__ void collectDistanceUpdates() {
           buckets[oldBucketNum].erase(v);
           bucketLocks[oldBucketNum].unlock();
         }
+        printf("replacing distance v=%d from %f -> %f\n", v, distance[v], dist);
         distance[v] = dist;
         bucketLocks[newBucketNum].lock();
         buckets[newBucketNum].insert(v);
@@ -203,6 +207,7 @@ __global__ void collectDistanceUpdates() {
   void ParallelCUDADeltaStepping::cudaFindRequests(std::set<int> &nodes, std::vector<cuRequest> &relaxUpdates, EdgeType type) {
     // Copy bucket vectors, pass the data to device memory
     int bucketSize = nodes.size();
+    std::vector<int> &searchOffsets = (type == EdgeType::LIGHT) ? vLightOffsets : vHeavyOffsets;
     std::vector<int> curBucket;
     std::vector<int> bucketOffsets;
     curBucket.reserve(bucketSize);
@@ -211,10 +216,19 @@ __global__ void collectDistanceUpdates() {
     for (int u : nodes) {
       curBucket.push_back(u);
       bucketOffsets.push_back(curBucketOffset);
-      curBucketOffset += vLightOffsets[u+1] - vLightOffsets[u];
+      curBucketOffset += searchOffsets[u+1] - searchOffsets[u];
+      if (type == EdgeType::HEAVY) {
+        printf("(v=%d, #=%d) ", u, curBucketOffset);
+      }
     }
+    printf("\n");
     // Total number of requests is curBucketOffset
     bucketOffsets.push_back(curBucketOffset);
+    if (curBucketOffset == 0) {
+      return;
+    }
+
+    // Allocate device memory for finding requests
     cudaMalloc(&cuRelaxRequests, curBucketOffset * sizeof(cuRequest));
     cudaMalloc(&cuVRelaxOffsets, (bucketSize+1) * sizeof(int));
     cudaMalloc(&cuRelaxVertices, bucketSize * sizeof(int));
@@ -245,15 +259,16 @@ __global__ void collectDistanceUpdates() {
     // Find requests using CUDA
     //int numVertexBlocks = (bucketSize + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
     int numReqBlocks = (curBucketOffset + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
+    printf("relax calling findrequests. numVertice=%d numRequests=%d numBlock=%d\n", bucketSize, curBucketOffset, numReqBlocks);
     findRequests<<<numReqBlocks, THREADS_PER_BLK>>>(type);
     cudaCheckError(cudaDeviceSynchronize());
-    printf("relax findrequests done! numRequests=%d numBlock=%d\n", curBucketOffset, numReqBlocks);
 
     relaxUpdates.resize(curBucketOffset);
     cudaMemcpy(relaxUpdates.data(), relaxParams.relaxRequests, curBucketOffset * sizeof(cuRequest), cudaMemcpyDeviceToHost);
     cudaCheckError(cudaDeviceSynchronize());
     printf("printing all relax requests\n");
-          for (int i=0; i < 5 && i < (int) relaxUpdates.size(); i++) {
+    int maxprint = (type == EdgeType::LIGHT) ? 3 : 5;
+          for (int i=0; i < maxprint && i < (int) relaxUpdates.size(); i++) {
             printf("request[%d]=(dest=%d, dist=%f)\n", i, relaxUpdates[i].first, relaxUpdates[i].second);
           }
     // Sort relaxations using thrust
@@ -276,7 +291,7 @@ __global__ void collectDistanceUpdates() {
     cudaMemcpy(relaxUpdates.data(), relaxParams.relaxRequests, curBucketOffset * sizeof(cuRequest), cudaMemcpyDeviceToHost);
     cudaCheckError(cudaDeviceSynchronize());
     printf("printing sorted relax requests\n");
-          for (int i=0; i < 5 && i < (int) relaxUpdates.size(); i++) {
+          for (int i=0; i < maxprint && i < (int) relaxUpdates.size(); i++) {
             printf("request[%d]=(dest=%d, dist=%f)\n", i, relaxUpdates[i].first, relaxUpdates[i].second);
           }
     //printf("relax thrust sort done!\n");
@@ -309,6 +324,9 @@ __global__ void collectDistanceUpdates() {
     cudaMemcpy(relaxUpdates.data(), relaxParams.output, numRelaxUpdates * sizeof(cuRequest), cudaMemcpyDeviceToHost);
     cudaCheckError(cudaDeviceSynchronize());
     printf("relax data copy done! size=%d\n", numRelaxUpdates);
+          for (int i=0; i < maxprint && i < (int) relaxUpdates.size(); i++) {
+            printf("update[%d]=(dest=%d, dist=%f)\n", i, relaxUpdates[i].first, relaxUpdates[i].second);
+          }
     
     // Free device memory
     cudaFree(cuRelaxRequests);
@@ -369,7 +387,7 @@ __global__ void collectDistanceUpdates() {
                cudaMemcpyHostToDevice);
     cudaMemcpy(cuVLightOffsets, vLightOffsets.data(), (numVertices+1) * sizeof(int),
                cudaMemcpyHostToDevice);
-    cudaMemcpy(cuHeavyEdges, heavyEdges.data(), lightEdges.size() * sizeof(edge),
+    cudaMemcpy(cuHeavyEdges, heavyEdges.data(), heavyEdges.size() * sizeof(edge),
                cudaMemcpyHostToDevice);
     cudaMemcpy(cuVHeavyOffsets, vHeavyOffsets.data(), (numVertices+1) * sizeof(int),
                cudaMemcpyHostToDevice);
