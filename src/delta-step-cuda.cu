@@ -7,15 +7,6 @@
 #include <math.h>
 
 #include "delta-step-cuda.h"
-#ifndef SOLVER_HEADER
-#define SOLVER_HEADER
-#include "solver.h"
-#include "timing.h"
-#endif
-#ifndef DELTA_CMN_HEADER
-#define DELTA_CMN_HEADER
-#include "delta-step-common.h"
-#endif
 
 #include <cuda.h>
 #include <cuda_runtime.h>
