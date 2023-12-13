@@ -24,8 +24,8 @@ $(TARGETBIN):
 	g++ $(CFLAGS) src/main.cpp -o $(TARGETBIN)
 
 # Objects for CUDA compilation
-$(OBJDIR)/%.o: %.cu
-		$(NVCC) $< $(NVCCFLAGS) -c -o $@
+$(OBJDIR)/%.o: src/%.cu
+    $(NVCC) $< $(NVCCFLAGS) -c -o $@
 
 cuda: $(CUDAOBJS)
 

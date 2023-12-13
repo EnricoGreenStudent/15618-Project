@@ -59,7 +59,7 @@ struct DeltaSteppingConstants {
 
 struct DeltaSteppingRelaxParams {
   int numRequests;
-  int rumRelaxVertices;
+  int numRelaxVertices;
   request* relaxRequests;
   int* vRelaxOffsets; // start of relax requests for each vertex in `relaxRequests`
   int* relaxVertices; // vertex numbers for each vertex in `vRelaxOffsets`
@@ -85,7 +85,7 @@ __constant__ DeltaSteppingRelaxParams constRelaxParams;  // Updates outside of d
  * handle, then find which edge of that vertex thread should
  * process for the relaxation.
 */
-__global__ int search_edge_index(int* searchOffsets) {
+__device__ int search_edge_index(int* searchOffsets) {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
 
   int left = 0;
@@ -116,11 +116,14 @@ __global__ void findRequests(EdgeType type) {
   int* searchOffsets = (type == EdgeType::LIGHT) ? constParams.vLightOffsets : constParams.vHeavyOffsets;
   int u = search_edge_index(searchOffsets);
   // offset + start of edges for the vertex
-  int edgeNum = (nodeID - vRelaxOffsets[left - 1]) + constParams.searchOffsets[u];
+  int edgeNum = (nodeID - constRelaxParams.vRelaxOffsets[left - 1]) + constParams.searchOffsets[u];
   edge &e = searchEdges[edgeNum];
   int v = e.dest;
   float w = e.weight;
-  constRelaxParams.relaxRequests[nodeID] = std::make_pair(v, constParams.distance[u] + w);
+  request req;
+  req.first = v;
+  req.second = constParams.distance[u] + w;
+  constRelaxParams.relaxRequests[nodeID] = req;
 }
 
 /**
@@ -152,8 +155,8 @@ __global__ void collectDistanceUpdates() {
     return;
   }
 
-  int outputIndex = constRelaxParams.isMin[nodeID].first;
-  if (nodeID == 0 || constRelaxParams.isMin[nodeID - 1].first != outputIndex) {
+  int outputIndex = constRelaxParams.isMin[nodeID];
+  if (nodeID == 0 || constRelaxParams.isMin[nodeID - 1] != outputIndex) {
     constRelaxParams.output[outputIndex] = constRelaxParams.relaxRequests[nodeID];
   }
 }
@@ -276,15 +279,15 @@ class ParallelDeltaStepping : public SSSPSolver {
     }
   }
 
-  void cudaFindRequests(std::vector<request> &relaxUpdates, EdgeType type) {
+  void cudaFindRequests(std::set<int> &nodes, std::vector<request> &relaxUpdates, EdgeType type) {
     // Copy bucket vectors, pass the data to device memory
-    int bucketSize = buckets[currentBucket].size();
+    int bucketSize = nodes.size();
     std::vector<int> curBucket;
     std::vector<int> bucketOffsets;
     curBucket.reserve(bucketSize);
     bucketOffsets.reserve(bucketSize);
     int curBucketOffset = 0;
-    for (int u : buckets[currentBucket]) {
+    for (int u : nodes) {
       curBucket.push_back(u);
       bucketOffsets.push_back(curBucketOffset);
       curBucketOffset += vLightOffsets[u+1] - vLightOffsets[u];
@@ -366,7 +369,7 @@ public:
       vLightOffsets.push_back(lightIndex);
       vHeavyOffsets.push_back(heavyIndex);
       for (edge &e : edges[u]) {
-        int v = e.dest;
+        // int v = e.dest;
         float w = e.weight;
         if (w <= delta) {
           lightEdges.push_back(e);
@@ -394,13 +397,19 @@ public:
                cudaMemcpyHostToDevice);
     cudaMemcpy(cuVHeavyOffsets, vHeavyOffsets.data(), (numVertices+1) * sizeof(int),
                cudaMemcpyHostToDevice);
-    cudaMemcpy(cuDistance, distance.data(), numVertices * sizeof(float));
+    cudaMemcpy(cuDistance, distance.data(), numVertices * sizeof(float),
+               cudaMemcpyHostToDevice);
 
     DeltaSteppingConstants params;
+    params.source = source;
+    params.numVertices = numVertices;
+    params.delta = delta;
+    params.numBuckets = numBuckets;
     params.lightEdges = cuLightEdges;
     params.vLightOffsets = cuVLightOffsets;
     params.heavyEdges = cuHeavyEdges;
-    params.vHeavyEdges = cuVHeavyOffsets;
+    params.vHeavyOffsets = cuVHeavyOffsets;
+    params.distance = cuDistance;
     cudaMemcpyToSymbol(constParams, &params, sizeof(DeltaSteppingConstants));
 
     // Run algorithm
@@ -422,7 +431,7 @@ public:
         // Inner loop
         std::vector<request> relaxUpdates;
         while (!buckets[currentBucket].empty()) {
-          cudaFindRequests(relaxUpdates, LIGHT);
+          cudaFindRequests(buckets[currentBucket], relaxUpdates, LIGHT);
 
           // Empty current bucket, move all node to new bucket
           deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
@@ -431,7 +440,7 @@ public:
           relaxUpdates.clear();
         }
         // requests = findRequests(deletedNodes, HEAVY, distance);
-        cudaFindRequests(relaxUpdates, HEAVY);
+        cudaFindRequests(deletedNodes, relaxUpdates, HEAVY);
         relaxRequests(requests, bucketLocks, vertexLocks, distance);
         lastEmptiedBucket = currentBucket;
       }
