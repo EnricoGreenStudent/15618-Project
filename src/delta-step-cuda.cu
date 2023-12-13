@@ -15,9 +15,26 @@
 #include <thrust/sort.h>
 #include <thrust/functional.h>
 #include <thrust/execution_policy.h>
+#include <thrust/device_ptr.h>
 
 #define THREADS_PER_BLK 256
 
+
+#define cudaCheckError(ans) cudaAssert((ans), __FILE__, __LINE__);
+inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+    if (code != cudaSuccess) {
+        fprintf(stderr, "CUDA Error: %s at %s:%d\n",
+        cudaGetErrorString(code), file, line);
+        if (abort) exit(code);
+    }
+    cudaError_t errCode = cudaPeekAtLastError();
+    if (errCode != cudaSuccess) {
+        fprintf(stderr, "CUDA Error: %s at %s:%d\n",
+        cudaGetErrorString(errCode), file, line);
+        if (abort) exit(errCode);
+    }
+}
 
 /**
  * Global constants
@@ -55,6 +72,13 @@ struct DeltaSteppingRelaxParams {
 __constant__ DeltaSteppingConstants constParams;
 __constant__ DeltaSteppingRelaxParams constRelaxParams;  // Updates outside of device
 
+struct ReqCmp {
+  __device__
+  bool operator()(const cuRequest& o1, const cuRequest& o2) {
+      return o1.first < o2.first || (o1.first == o2.first && o1.second < o2.second);
+  }
+};
+
 /**
  * Returns the index among the relaxed vertices for thi thread.
  * 
@@ -65,7 +89,7 @@ __constant__ DeltaSteppingRelaxParams constRelaxParams;  // Updates outside of d
  * handle, then find which edge of that vertex thread should
  * process for the relaxation.
 */
-__device__ int search_edge_index(int* searchOffsets) {
+__device__ __inline__ int search_edge_index() {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
 
   int left = 0;
@@ -88,13 +112,13 @@ __device__ int search_edge_index(int* searchOffsets) {
 */
 __global__ void findRequests(EdgeType type) {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
-  if (nodeID >= constParams.numVertices) {
+  if (nodeID >= constRelaxParams.numRequests) {
     return;
   }
 
   edge* searchEdges = (type == EdgeType::LIGHT) ? constParams.lightEdges : constParams.heavyEdges;
   int* searchOffsets = (type == EdgeType::LIGHT) ? constParams.vLightOffsets : constParams.vHeavyOffsets;
-  int searchIndex = search_edge_index(searchOffsets);
+  int searchIndex = search_edge_index();
   int u = constRelaxParams.relaxVertices[searchIndex];
   // offset + start of edges for the vertex
   int edgeNum = (nodeID - constRelaxParams.vRelaxOffsets[searchIndex]) + searchOffsets[u];
@@ -112,6 +136,7 @@ __global__ void findRequests(EdgeType type) {
  * to minimal distances for that destination vertex.
  * 
  * Pass results into a prefix sum, then use that to fill output.
+ * Also updates the distance values on GPU device memory
 */
 __global__ void getIsMinDistance() {
   int nodeID = blockIdx.x * blockDim.x + threadIdx.x;
@@ -121,13 +146,16 @@ __global__ void getIsMinDistance() {
 
   constRelaxParams.isMin[nodeID] = 0;
   int v = constRelaxParams.relaxRequests[nodeID].first;
+  float dist = constRelaxParams.relaxRequests[nodeID].second;
   if (nodeID == 0 || constRelaxParams.relaxRequests[nodeID - 1].first != v) {
-    constRelaxParams.isMin[nodeID] = 1;
+    if (dist < constParams.distance[v]) {
+      constParams.distance[v] = dist;
+      constRelaxParams.isMin[nodeID] = 1;
+    }
   }
 }
 
 /**
- * Returns the number of output requests.
  * The thread is given prefix summed values in isMin to use as indices
 */
 __global__ void collectDistanceUpdates() {
@@ -137,7 +165,7 @@ __global__ void collectDistanceUpdates() {
   }
 
   int outputIndex = constRelaxParams.isMin[nodeID];
-  if (nodeID == 0 || constRelaxParams.isMin[nodeID - 1] != outputIndex) {
+  if (constRelaxParams.isMin[nodeID + 1] != outputIndex) {
     constRelaxParams.output[outputIndex] = constRelaxParams.relaxRequests[nodeID];
   }
 }
@@ -178,6 +206,7 @@ __global__ void collectDistanceUpdates() {
   void ParallelCUDADeltaStepping::cudaFindRequests(std::set<int> &nodes, std::vector<cuRequest> &relaxUpdates, EdgeType type) {
     // Copy bucket vectors, pass the data to device memory
     int bucketSize = nodes.size();
+    std::vector<int> &searchOffsets = (type == EdgeType::LIGHT) ? vLightOffsets : vHeavyOffsets;
     std::vector<int> curBucket;
     std::vector<int> bucketOffsets;
     curBucket.reserve(bucketSize);
@@ -186,20 +215,26 @@ __global__ void collectDistanceUpdates() {
     for (int u : nodes) {
       curBucket.push_back(u);
       bucketOffsets.push_back(curBucketOffset);
-      curBucketOffset += vLightOffsets[u+1] - vLightOffsets[u];
+      curBucketOffset += searchOffsets[u+1] - searchOffsets[u];
     }
     // Total number of requests is curBucketOffset
     bucketOffsets.push_back(curBucketOffset);
+    if (curBucketOffset == 0) {
+      return;
+    }
+
+    // Allocate device memory for finding requests
     cudaMalloc(&cuRelaxRequests, curBucketOffset * sizeof(cuRequest));
     cudaMalloc(&cuVRelaxOffsets, (bucketSize+1) * sizeof(int));
     cudaMalloc(&cuRelaxVertices, bucketSize * sizeof(int));
-    cudaMalloc(&cuRelaxIsMin, curBucketOffset * sizeof(int));
+    cudaMalloc(&cuRelaxIsMin, (curBucketOffset+1) * sizeof(int));
     cudaMalloc(&cuRelaxOutput, curBucketOffset * sizeof(cuRequest));
     // Create offsets for all of the vertices in the current bucket
     cudaMemcpy(cuVRelaxOffsets, bucketOffsets.data(), (bucketSize+1) * sizeof(int),
                 cudaMemcpyHostToDevice);
     cudaMemcpy(cuRelaxVertices, curBucket.data(), bucketSize * sizeof(int),
                 cudaMemcpyHostToDevice);
+
 
     DeltaSteppingRelaxParams relaxParams;
     relaxParams.numRequests = curBucketOffset;
@@ -212,26 +247,39 @@ __global__ void collectDistanceUpdates() {
     cudaMemcpyToSymbol(constRelaxParams, &relaxParams, sizeof(DeltaSteppingRelaxParams));
 
     // Find requests using CUDA
-    int numVertexBlocks = (bucketSize + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
-    findRequests<<<numVertexBlocks, THREADS_PER_BLK>>>(type);
+    int numReqBlocks = (curBucketOffset + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
+    findRequests<<<numReqBlocks, THREADS_PER_BLK>>>(type);
+    // cudaCheckError(cudaDeviceSynchronize());
     // Sort relaxations using thrust
+/* Note: This uses an execution policy to tell thrust the pointers are in device memory
     thrust::sort(
+      thrust::device,
       relaxParams.relaxRequests,
       relaxParams.relaxRequests + relaxParams.numRequests,
-      thrust::less<cuRequest>());
+      ReqCmp());
+*/
+    thrust::device_ptr<cuRequest> ptrRelaxRequests(relaxParams.relaxRequests);
+    thrust::sort(
+      ptrRelaxRequests,
+      ptrRelaxRequests + relaxParams.numRequests,
+      ReqCmp());
+    // cudaCheckError(cudaDeviceSynchronize());
     // Find minimal relaxations
-    int numReqBlocks = (curBucketOffset + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
     getIsMinDistance<<<numReqBlocks, THREADS_PER_BLK>>>();
+    // cudaCheckError(cudaDeviceSynchronize());
     // Get prefix sums using thrust
-    thrust::exclusive_scan(relaxParams.isMin, relaxParams.isMin + relaxParams.numRequests, relaxParams.isMin);
+    thrust::device_ptr<int> ptrIsMin(relaxParams.isMin);
+    thrust::exclusive_scan(ptrIsMin, ptrIsMin + relaxParams.numRequests + 1, ptrIsMin);
+    // cudaCheckError(cudaDeviceSynchronize());
     // Collect updates
     collectDistanceUpdates<<<numReqBlocks, THREADS_PER_BLK>>>();
+    // cudaCheckError(cudaDeviceSynchronize());
     // Get size of output requests
     int numRelaxUpdates;
-    cudaMemcpy(&numRelaxUpdates, &relaxParams.relaxRequests[curBucketOffset-1], sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&numRelaxUpdates, &relaxParams.isMin[curBucketOffset], sizeof(int), cudaMemcpyDeviceToHost);
     // Copy output to host
     relaxUpdates.resize(numRelaxUpdates);
-    cudaMemcpy(relaxUpdates.data(), &relaxParams.output, numRelaxUpdates * sizeof(cuRequest), cudaMemcpyDeviceToHost);
+    cudaMemcpy(relaxUpdates.data(), relaxParams.output, numRelaxUpdates * sizeof(cuRequest), cudaMemcpyDeviceToHost);
     
     // Free device memory
     cudaFree(cuRelaxRequests);
@@ -248,7 +296,7 @@ __global__ void collectDistanceUpdates() {
     float heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for (int u = 0; u < numVertices; u++) {
       for (edge &e : edges[u]) {
         float w = e.weight;
@@ -277,6 +325,8 @@ __global__ void collectDistanceUpdates() {
     }
     vLightOffsets.push_back(lightIndex);
     vHeavyOffsets.push_back(heavyIndex);
+    
+    distance[source] = 0;
 
     // Initialize CUDA memory for constant params
     cudaMalloc(&cuLightEdges, lightEdges.size() * sizeof(edge));
@@ -288,7 +338,7 @@ __global__ void collectDistanceUpdates() {
                cudaMemcpyHostToDevice);
     cudaMemcpy(cuVLightOffsets, vLightOffsets.data(), (numVertices+1) * sizeof(int),
                cudaMemcpyHostToDevice);
-    cudaMemcpy(cuHeavyEdges, heavyEdges.data(), lightEdges.size() * sizeof(edge),
+    cudaMemcpy(cuHeavyEdges, heavyEdges.data(), heavyEdges.size() * sizeof(edge),
                cudaMemcpyHostToDevice);
     cudaMemcpy(cuVHeavyOffsets, vHeavyOffsets.data(), (numVertices+1) * sizeof(int),
                cudaMemcpyHostToDevice);
@@ -312,7 +362,6 @@ __global__ void collectDistanceUpdates() {
     std::mutex bucketLocks[numBuckets];
     std::mutex vertexLocks[numVertices];
     buckets.resize(numBuckets);
-    distance[source] = 0;
     buckets[0].insert(0);
     int lastEmptiedBucket = numBuckets - 1;
     int currentBucket = 0;
@@ -327,16 +376,14 @@ __global__ void collectDistanceUpdates() {
         std::vector<cuRequest> relaxUpdates;
         while (!buckets[currentBucket].empty()) {
           cudaFindRequests(buckets[currentBucket], relaxUpdates, LIGHT);
-
           // Empty current bucket, move all node to new bucket
           deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
           buckets[currentBucket].clear();
           relaxRequests(relaxUpdates, bucketLocks, vertexLocks, distance);
-          relaxUpdates.clear();
         }
         // requests = findRequests(deletedNodes, HEAVY, distance);
         cudaFindRequests(deletedNodes, relaxUpdates, HEAVY);
-        relaxRequests(requests, bucketLocks, vertexLocks, distance);
+        relaxRequests(relaxUpdates, bucketLocks, vertexLocks, distance);
         lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
