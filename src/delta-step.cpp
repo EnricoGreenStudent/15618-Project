@@ -144,7 +144,6 @@ public:
     #pragma omp parallel for
     for (int u = 0; u < numVertices; u++) {
       for (edge &e : edges[u]) {
-        int v = e.dest;
         float w = e.weight;
         if (w <= delta) {
           lightEdges[u].push_back(e);

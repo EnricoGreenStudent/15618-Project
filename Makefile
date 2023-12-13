@@ -20,7 +20,7 @@ $(TARGET_BELLMAN):
 $(TARGET_DIJKSTRA):
 	g++ $(CFLAGS) src/dijkstra.cpp -o $(TARGET_DIJKSTRA)
 
-$(TARGETBIN): $(CUDAOBJS)
+$(TARGETBIN): $(CUDAOBJS) src/main.cpp
 	g++ $(CFLAGS) src/main.cpp -o $(TARGETBIN) $(CUDAOBJS) $(LDFLAGS)
 
 # Objects for CUDA compilation

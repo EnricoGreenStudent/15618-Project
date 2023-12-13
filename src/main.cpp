@@ -11,9 +11,9 @@
 
 // Prints a list of edges in the graph. Used for testing
 void testGraphLoading(graph g) {
-    for(int i = 0; i < g.vertices.size(); i++) {
-        for(int j = 0; j < g.vertices[i].size(); j++) {
-            printf("%d %d %f\n", i, g.vertices[i][j].dest, g.vertices[i][j].weight);
+    for(size_t i = 0; i < g.vertices.size(); i++) {
+        for(size_t j = 0; j < g.vertices[i].size(); j++) {
+            printf("%lu %d %f\n", i, g.vertices[i][j].dest, g.vertices[i][j].weight);
         }
     }
 }
@@ -28,7 +28,7 @@ void dummyFunc(graph g, std::vector<float> dists) {
 // Outputs the SSSP results to a file
 void saveResults(std::vector<float> dists, std::string fileName) {
     std::ofstream file(fileName);
-    for(int i = 0; i < dists.size(); i++) {
+    for(size_t i = 0; i < dists.size(); i++) {
         file << std::to_string(i);
         file << ": ";
         file << std::to_string(dists[i]);
@@ -39,7 +39,7 @@ void saveResults(std::vector<float> dists, std::string fileName) {
 
 void savePred(std::vector<int> preds, std::string fileName) {
     std::ofstream file(fileName);
-    for(int i = 0; i < preds.size(); i++) {
+    for(size_t i = 0; i < preds.size(); i++) {
         file << std::to_string(i);
         file << ": ";
         file << std::to_string(preds[i]);
@@ -144,8 +144,8 @@ void deltaStepCudaBenchmark(graph g) {
     t.reset();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
-    saveResults(distance, "out.txt");
-    bool correct = checkCorrectness("out-ref.txt", "out.txt");
+    saveResults(distance, "out-cuda.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out-cuda.txt");
     if(correct) {
         printf("Delta Stepping CUDA Runtime: %.4f\n", elapsed);
     } else {
@@ -177,7 +177,7 @@ int main(int argc, const char **argv) {
     }
     // Iterate through input file and add edges to graph
     while(getline(file, currentLine)) {
-        edge e;
+        // edge e;
         char * str = (char *) currentLine.c_str();
         str = strtok(str, ",");
         int src = std::stoi(str);
