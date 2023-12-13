@@ -7,6 +7,15 @@
 #include <math.h>
 
 #include "delta-step-cuda.h"
+#ifndef SOLVER_HEADER
+#define SOLVER_HEADER
+#include "solver.h"
+#include "timing.h"
+#endif
+#ifndef DELTA_CMN_HEADER
+#define DELTA_CMN_HEADER
+#include "delta-step-common.h"
+#endif
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -40,11 +49,11 @@ struct DeltaSteppingConstants {
 struct DeltaSteppingRelaxParams {
   int numRequests;
   int numRelaxVertices;
-  request* relaxRequests;
+  cuRequest* relaxRequests;
   int* vRelaxOffsets; // start of relax requests for each vertex in `relaxRequests`
   int* relaxVertices; // vertex numbers for each vertex in `vRelaxOffsets`
   int* isMin;
-  request* output;
+  cuRequest* output;
 };
 
 // Global variable that is in scope, but read-only, for all cuda
@@ -101,7 +110,7 @@ __global__ void findRequests(EdgeType type) {
   edge &e = searchEdges[edgeNum];
   int v = e.dest;
   float w = e.weight;
-  request req;
+  cuRequest req;
   req.first = v;
   req.second = constParams.distance[u] + w;
   constRelaxParams.relaxRequests[nodeID] = req;
@@ -149,9 +158,9 @@ __global__ void collectDistanceUpdates() {
     return (int) (distance / delta) % numBuckets;
   }
 
-  void ParallelCUDADeltaStepping::relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
+  void ParallelCUDADeltaStepping::relaxRequests(std::vector<cuRequest> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
     #pragma omp parallel for
-    for (request &req : requests) {
+    for (cuRequest &req : requests) {
       int v = req.first;
       float dist = req.second;
       // find new min and add to bucket
@@ -175,7 +184,7 @@ __global__ void collectDistanceUpdates() {
     }
   }
 
-  void ParallelCUDADeltaStepping::cudaFindRequests(std::set<int> &nodes, std::vector<request> &relaxUpdates, EdgeType type) {
+  void ParallelCUDADeltaStepping::cudaFindRequests(std::set<int> &nodes, std::vector<cuRequest> &relaxUpdates, EdgeType type) {
     // Copy bucket vectors, pass the data to device memory
     int bucketSize = nodes.size();
     std::vector<int> curBucket;
@@ -190,11 +199,11 @@ __global__ void collectDistanceUpdates() {
     }
     // Total number of requests is curBucketOffset
     bucketOffsets.push_back(curBucketOffset);
-    cudaMalloc(&cuRelaxRequests, curBucketOffset * sizeof(request));
+    cudaMalloc(&cuRelaxRequests, curBucketOffset * sizeof(cuRequest));
     cudaMalloc(&cuVRelaxOffsets, (bucketSize+1) * sizeof(int));
     cudaMalloc(&cuRelaxVertices, bucketSize * sizeof(int));
     cudaMalloc(&cuRelaxIsMin, curBucketOffset * sizeof(int));
-    cudaMalloc(&cuRelaxOutput, curBucketOffset * sizeof(request));
+    cudaMalloc(&cuRelaxOutput, curBucketOffset * sizeof(cuRequest));
     // Create offsets for all of the vertices in the current bucket
     cudaMemcpy(cuVRelaxOffsets, bucketOffsets.data(), (bucketSize+1) * sizeof(int),
                 cudaMemcpyHostToDevice);
@@ -218,7 +227,7 @@ __global__ void collectDistanceUpdates() {
     thrust::sort(
       relaxParams.relaxRequests,
       relaxParams.relaxRequests + relaxParams.numRequests,
-      thrust::less<request>());
+      thrust::less<cuRequest>());
     // Find minimal relaxations
     int numReqBlocks = (curBucketOffset + THREADS_PER_BLK - 1) / THREADS_PER_BLK;
     getIsMinDistance<<<numReqBlocks, THREADS_PER_BLK>>>();
@@ -231,7 +240,7 @@ __global__ void collectDistanceUpdates() {
     cudaMemcpy(&numRelaxUpdates, &relaxParams.relaxRequests[curBucketOffset-1], sizeof(int), cudaMemcpyDeviceToHost);
     // Copy output to host
     relaxUpdates.resize(numRelaxUpdates);
-    cudaMemcpy(relaxUpdates.data(), &relaxParams.output, numRelaxUpdates * sizeof(request), cudaMemcpyDeviceToHost);
+    cudaMemcpy(relaxUpdates.data(), &relaxParams.output, numRelaxUpdates * sizeof(cuRequest), cudaMemcpyDeviceToHost);
     
     // Free device memory
     cudaFree(cuRelaxRequests);
@@ -321,10 +330,10 @@ __global__ void collectDistanceUpdates() {
       counter += 1;
       // Repeat light edge relaxations until no vertices placed back in bucket
       if (!buckets[currentBucket].empty()) {
-        std::vector<request> requests;
+        std::vector<cuRequest> requests;
         std::set<int> deletedNodes;
         // Inner loop
-        std::vector<request> relaxUpdates;
+        std::vector<cuRequest> relaxUpdates;
         while (!buckets[currentBucket].empty()) {
           cudaFindRequests(buckets[currentBucket], relaxUpdates, LIGHT);
 
