@@ -178,7 +178,7 @@ __global__ void collectDistanceUpdates() {
   }
 
   void ParallelCUDADeltaStepping::relaxRequests(std::vector<cuRequest> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for (cuRequest &req : requests) {
       int v = req.first;
       float dist = req.second;
@@ -290,6 +290,12 @@ __global__ void collectDistanceUpdates() {
   }
   
   void ParallelCUDADeltaStepping::deltaStep(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+    Timer t;
+    double setupTime = 0;
+    double findTime = 0;
+    double relaxTime = 0;
+    double dataMovementTime = 0;
+    t.reset();
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
@@ -327,6 +333,15 @@ __global__ void collectDistanceUpdates() {
     vHeavyOffsets.push_back(heavyIndex);
     
     distance[source] = 0;
+    this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
+    std::mutex bucketLocks[numBuckets];
+    std::mutex vertexLocks[numVertices];
+    buckets.resize(numBuckets);
+    buckets[0].insert(0);
+    int lastEmptiedBucket = numBuckets - 1;
+    int currentBucket = 0;
+    setupTime = t.elapsed();
+    t.reset();
 
     // Initialize CUDA memory for constant params
     cudaMalloc(&cuLightEdges, lightEdges.size() * sizeof(edge));
@@ -356,18 +371,9 @@ __global__ void collectDistanceUpdates() {
     params.vHeavyOffsets = cuVHeavyOffsets;
     params.distance = cuDistance;
     cudaMemcpyToSymbol(constParams, &params, sizeof(DeltaSteppingConstants));
-
+    dataMovementTime = t.elapsed();
     // Run algorithm
-    this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
-    std::mutex bucketLocks[numBuckets];
-    std::mutex vertexLocks[numVertices];
-    buckets.resize(numBuckets);
-    buckets[0].insert(0);
-    int lastEmptiedBucket = numBuckets - 1;
-    int currentBucket = 0;
-    int counter = 0;
     while(currentBucket != lastEmptiedBucket) {
-      counter += 1;
       // Repeat light edge relaxations until no vertices placed back in bucket
       if (!buckets[currentBucket].empty()) {
         std::vector<cuRequest> requests;
@@ -375,15 +381,22 @@ __global__ void collectDistanceUpdates() {
         // Inner loop
         std::vector<cuRequest> relaxUpdates;
         while (!buckets[currentBucket].empty()) {
+          t.reset();
           cudaFindRequests(buckets[currentBucket], relaxUpdates, LIGHT);
+          findTime += t.elapsed();
           // Empty current bucket, move all node to new bucket
           deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
           buckets[currentBucket].clear();
+          t.reset();
           relaxRequests(relaxUpdates, bucketLocks, vertexLocks, distance);
+          relaxTime += t.elapsed();
         }
-        // requests = findRequests(deletedNodes, HEAVY, distance);
+        t.reset();
         cudaFindRequests(deletedNodes, relaxUpdates, HEAVY);
+        findTime += t.elapsed();
+        t.reset();
         relaxRequests(relaxUpdates, bucketLocks, vertexLocks, distance);
+        relaxTime += t.elapsed();
         lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
@@ -395,6 +408,7 @@ __global__ void collectDistanceUpdates() {
     cudaFree(cuHeavyEdges);
     cudaFree(cuVHeavyOffsets);
     cudaFree(cuDistance);
+    printf("CUDA Profiling:\n\tSetup: %f\n\tData movement: %f\n\tFind: %f\n\tRelax: %f\n", setupTime, dataMovementTime, findTime, relaxTime);
   }
 
   void ParallelCUDADeltaStepping::solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {

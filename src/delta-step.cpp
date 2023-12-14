@@ -123,6 +123,11 @@ class ParallelDeltaStepping : public SSSPSolver {
 
 public:
   void deltaStep(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+    Timer t;
+    double setupTime = 0;
+    double findTime = 0;
+    double relaxTime = 0;
+    t.reset();
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
@@ -160,25 +165,33 @@ public:
     buckets[0].insert(0);
     int lastEmptiedBucket = numBuckets - 1;
     int currentBucket = 0;
-    int counter = 0;
+    setupTime = t.elapsed();
     while(currentBucket != lastEmptiedBucket) {
-      counter += 1;
       if (!buckets[currentBucket].empty()) {
         std::vector<request> requests;
         std::set<int> deletedNodes;
         // Inner loop
         while (!buckets[currentBucket].empty()) {
+          t.reset();
           requests = findRequests(buckets[currentBucket], LIGHT, distance);
+          findTime += t.elapsed();
           deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
           buckets[currentBucket].clear();
+          t.reset();
           relaxRequests(requests, bucketLocks, vertexLocks, distance);
+          relaxTime += t.elapsed();
         }
+        t.reset();
         requests = findRequests(deletedNodes, HEAVY, distance);
+        findTime += t.elapsed();
+        t.reset();
         relaxRequests(requests, bucketLocks, vertexLocks, distance);
+        relaxTime += t.elapsed();
         lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
     }
+    printf("OpenMP Profiling:\n\tSetup: %f\n\tFind: %f\n\tRelax: %f\n", setupTime, findTime, relaxTime);
   }
 
   void solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) override {

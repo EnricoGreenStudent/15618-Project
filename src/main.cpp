@@ -7,6 +7,7 @@
 #include "bellman_forward.cpp"
 #include "bellman_backward.cpp"
 #include "delta-step.cpp"
+#include "delta-step-sequential.cpp"
 #include "delta-step-cuda.h"
 
 // Prints a list of edges in the graph. Used for testing
@@ -119,28 +120,51 @@ void bellmanBackwardBenchmark(graph g) {
     }
 }
 
-void deltaStepBenchmark(graph g) {
+void deltaStepOpenMPBenchmark(graph g) {
     Timer t;
+    std::vector<float> dummyDistance(g.numVertices, INFINITY);
+    std::vector<int> dummyPredecessor(g.numVertices, -1);
+    ParallelDeltaStepping solver;
+    solver.solve(0, g.vertices, dummyDistance, dummyPredecessor);
     std::vector<float> distance(g.numVertices, INFINITY);
     std::vector<int> predecessor(g.numVertices, -1);
-    ParallelDeltaStepping solver;
     t.reset();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
     saveResults(distance, "out.txt");
     bool correct = checkCorrectness("out-ref.txt", "out.txt");
     if(correct) {
-        printf("Delta Stepping Runtime: %.4f\n", elapsed);
+        printf("Delta Stepping OpenMP Runtime: %.4f\n", elapsed);
     } else {
-        printf("Delta Stepping Incorrect (Runtime: %.4f)\n", elapsed);
+        printf("Delta Stepping OpenMP Incorrect (Runtime: %.4f)\n", elapsed);
+    }
+}
+
+void deltaStepSequentialBenchmark(graph g) {
+    Timer t;
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    SequentialDeltaStepping solver;
+    t.reset();
+    solver.solve(0, g.vertices, distance, predecessor);
+    double elapsed = t.elapsed();
+    saveResults(distance, "out.txt");
+    bool correct = checkCorrectness("out-ref.txt", "out.txt");
+    if(correct) {
+        printf("Sequential Delta Stepping Runtime: %.4f\n", elapsed);
+    } else {
+        printf("Sequential Delta Stepping Incorrect (Runtime: %.4f)\n", elapsed);
     }
 }
 
 void deltaStepCudaBenchmark(graph g) {
     Timer t;
+    std::vector<float> dummyDistance(g.numVertices, INFINITY);
+    std::vector<int> dummyPredecessor(g.numVertices, -1);
+    ParallelCUDADeltaStepping solver;
+    solver.solve(0, g.vertices, dummyDistance, dummyPredecessor);
     std::vector<float> distance(g.numVertices, INFINITY);
     std::vector<int> predecessor(g.numVertices, -1);
-    ParallelCUDADeltaStepping solver;
     t.reset();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
@@ -212,13 +236,12 @@ int main(int argc, const char **argv) {
     }
     file.close();
     // Unused: bellmanForwardBenchmark(g);
+    dijkstraBenchmark(g);
     if (!fastOnly) {
-        dijkstraBenchmark(g);
         bellmanBackwardBenchmark(g);
-    } else {
-        deltaStepReferenceSolution(g);
     }
-    deltaStepBenchmark(g);
+    deltaStepSequentialBenchmark(g);
+    deltaStepOpenMPBenchmark(g);
     deltaStepCudaBenchmark(g);
     return(0);
 }
