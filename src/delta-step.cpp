@@ -76,6 +76,7 @@ class ParallelDeltaStepping : public SSSPSolver {
    * Helper function for adding requests to local request list
   */
   void findRequestsForVertex(int u, EdgeType type, std::vector<float> &distance, std::vector<request> &localReqs) {
+    std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
     for (edge &e : searchEdges[u]) {
       int v = e.dest;
       float w = e.weight;
@@ -107,7 +108,7 @@ class ParallelDeltaStepping : public SSSPSolver {
   }
 
   void relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
-    #pragma omp parallel for
+    //#pragma omp parallel for
     for (request &req : requests) {
       int v = req.first;
       float dist = req.second;
@@ -192,10 +193,14 @@ public:
             for (int u : nodes) {
               findRequestsForVertex(u, LIGHT, distance, localReqs);
             }
+            //printf("nodes size=%lu, set size=%lu, reqlist size=%lu\n", nodes.size(), buckets[currentBucket].size(), localReqs.size());
+            #pragma omp barrier
             #pragma omp single
             {
+              deletedNodes.insert(nodes.begin(), nodes.end());
               buckets[currentBucket].clear();
             }
+            #pragma omp barrier
             relaxRequests(localReqs, bucketLocks, vertexLocks, distance);
           }
           /*
@@ -215,8 +220,10 @@ public:
           std::vector<request> localReqs;
           #pragma omp for
           for (int u : nodes) {
-            findRequestsForVertex(u, LIGHT, distance, localReqs);
+            findRequestsForVertex(u, HEAVY, distance, localReqs);
           }
+          //printf("nodes size=%lu, set size=%lu, reqlist size=%lu\n", nodes.size(), buckets[currentBucket].size(), localReqs.size());
+          #pragma omp barrier
           relaxRequests(localReqs, bucketLocks, vertexLocks, distance);
         }
         /*
@@ -226,8 +233,8 @@ public:
         t.reset();
         relaxRequests(requests, bucketLocks, vertexLocks, distance);
         relaxTime += t.elapsed();
-        lastEmptiedBucket = currentBucket;
         */
+        lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
     }
