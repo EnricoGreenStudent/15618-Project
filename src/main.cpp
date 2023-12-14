@@ -153,12 +153,32 @@ void deltaStepCudaBenchmark(graph g) {
     }
 }
 
+/**
+ * Generate the out-ref.txt reference solution using delta stepping
+ * implementation. Avoids running slow sequential dijkstra for large
+ * graphs.
+*/
+void deltaStepReferenceSolution(graph g) {
+    std::vector<float> distance(g.numVertices, INFINITY);
+    std::vector<int> predecessor(g.numVertices, -1);
+    ParallelDeltaStepping solver;
+    solver.solve(0, g.vertices, distance, predecessor);
+    saveResults(distance, "out-ref.txt");
+}
+
+
 // Main testing function
 int main(int argc, const char **argv) {
     // Parse commandline arguments, reject if no argument given (should give exactly one, which is a file name)
-    if(argc != 2) {
+    if(argc < 2) {
         printf("Incorrect number of arguments (%d received, 1 expected)\n", argc - 1);
         return(1);
+    }
+    int fastOnly = 0;
+    if (argc == 3) {
+        if (strcmp(argv[2], "--fast") == 0) {
+            fastOnly = 1;
+        }
     }
     // Open file
     std::ifstream file(argv[1], std::ifstream::in);
@@ -191,9 +211,13 @@ int main(int argc, const char **argv) {
         g.vertices[src].push_back(newEdge);
     }
     file.close();
-    dijkstraBenchmark(g);
-    // bellmanForwardBenchmark(g);
-    bellmanBackwardBenchmark(g);
+    // Unused: bellmanForwardBenchmark(g);
+    if (!fastOnly) {
+        dijkstraBenchmark(g);
+        bellmanBackwardBenchmark(g);
+    } else {
+        deltaStepReferenceSolution(g);
+    }
     deltaStepBenchmark(g);
     deltaStepCudaBenchmark(g);
     return(0);
