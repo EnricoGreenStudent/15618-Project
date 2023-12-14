@@ -73,6 +73,17 @@ class ParallelDeltaStepping : public SSSPSolver {
   }
 
   /**
+   * Helper function for adding requests to local request list
+  */
+  void findRequestsForVertex(int u, EdgeType type, std::vector<float> &distance, std::vector<request> &localReqs) {
+    for (edge &e : searchEdges[u]) {
+      int v = e.dest;
+      float w = e.weight;
+      localReqs.push_back(std::make_pair(v, distance[u] + w));
+    }
+  }
+
+  /**
    * Like findRequests but directly finds the lowest distance among the requests
    * @param[out] updated set of destination nodes that have 
    * @return lowest distance found among requests to each vertex
@@ -170,8 +181,24 @@ public:
       if (!buckets[currentBucket].empty()) {
         std::vector<request> requests;
         std::set<int> deletedNodes;
+        std::vector<int> nodes;
         // Inner loop
         while (!buckets[currentBucket].empty()) {
+          nodes.assign(buckets[currentBucket].begin(), buckets[currentBucket].end());
+          #pragma omp parallel
+          {
+            std::vector<request> localReqs;
+            #pragma omp for
+            for (int u : nodes) {
+              findRequestsForVertex(u, LIGHT, distance, localReqs);
+            }
+            #pragma omp single
+            {
+              buckets[currentBucket].clear();
+            }
+            relaxRequests(localReqs, bucketLocks, vertexLocks, distance);
+          }
+          /*
           t.reset();
           requests = findRequests(buckets[currentBucket], LIGHT, distance);
           findTime += t.elapsed();
@@ -180,7 +207,19 @@ public:
           t.reset();
           relaxRequests(requests, bucketLocks, vertexLocks, distance);
           relaxTime += t.elapsed();
+          */
         }
+        nodes.assign(deletedNodes.begin(), deletedNodes.end());
+        #pragma omp parallel
+        {
+          std::vector<request> localReqs;
+          #pragma omp for
+          for (int u : nodes) {
+            findRequestsForVertex(u, LIGHT, distance, localReqs);
+          }
+          relaxRequests(localReqs, bucketLocks, vertexLocks, distance);
+        }
+        /*
         t.reset();
         requests = findRequests(deletedNodes, HEAVY, distance);
         findTime += t.elapsed();
@@ -188,6 +227,7 @@ public:
         relaxRequests(requests, bucketLocks, vertexLocks, distance);
         relaxTime += t.elapsed();
         lastEmptiedBucket = currentBucket;
+        */
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
     }
