@@ -74,5 +74,10 @@ generateCycle(100000, 1, "cycle")
 generateTree(100000, 1, "tree")
 # regular
 generateRegularGraph(5000, 16, 50, "regular-5k")
+generateRegularGraph(5000, 250, 1000, "regular-5k-5p")
+generateRegularGraph(5000, 500, 1000, "regular-5k-10p")
+generateRegularGraph(5000, 1000, 1000, "regular-5k-25p")
+generateRegularGraph(10000, 500, 1000, "regular-10k-5p")
+generateRegularGraph(2500, 125, 1000, "regular-2.5k-5p")
 # shortTests - quick sanity test, 5 vertices, 10 edges
 generateEdgeList(5, 10, 5, "shortTest")
