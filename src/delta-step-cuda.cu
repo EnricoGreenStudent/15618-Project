@@ -384,7 +384,7 @@ __global__ void collectDistanceUpdates() {
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
-    heaviestEdgeWeight = 0;
+    this->heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
     for (int u = 0; u < numVertices; u++) {

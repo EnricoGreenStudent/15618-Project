@@ -148,7 +148,7 @@ public:
     printf("OpenMP Profiling:\n\tSetup: %f\n\tFind: %f\n\tRelax: %f\n", setupTime, findTime, relaxTime);
   }
 
-  void init(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+  void init(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) override {
     // Setup specific to loading the graph
     this->source = source;
     this->numVertices = edges.size();

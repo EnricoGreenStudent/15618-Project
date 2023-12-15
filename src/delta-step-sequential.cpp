@@ -25,6 +25,7 @@ class SequentialDeltaStepping : public SSSPSolver {
   // Preprocessed data
   float delta;
   int numBuckets;
+  float heaviestEdgeWeight;
   std::vector<std::vector<edge>> lightEdges;
   std::vector<std::vector<edge>> heavyEdges;
   // Updating fields
@@ -151,7 +152,7 @@ public:
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
-    float heaviestEdgeWeight = 0;
+    this->heaviestEdgeWeight = 0;
     
     // separate into light and heavy edges
     lightEdges.resize(numVertices);

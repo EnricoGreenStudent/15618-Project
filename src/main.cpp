@@ -131,6 +131,7 @@ void deltaStepOpenMPBenchmark(graph g) {
     std::vector<float> dummyDistance(g.numVertices, INFINITY);
     std::vector<int> dummyPredecessor(g.numVertices, -1);
     ParallelDeltaStepping solver;
+    solver.init(0, g.vertices, dummyDistance, dummyPredecessor);
     solver.solve(0, g.vertices, dummyDistance, dummyPredecessor);
     std::vector<float> distance(g.numVertices, INFINITY);
     std::vector<int> predecessor(g.numVertices, -1);
@@ -172,6 +173,7 @@ void deltaStepCudaBenchmark(graph g) {
     std::vector<float> dummyDistance(g.numVertices, INFINITY);
     std::vector<int> dummyPredecessor(g.numVertices, -1);
     ParallelCUDADeltaStepping solver;
+    solver.init(0, g.vertices, dummyDistance, dummyPredecessor);
     solver.solve(0, g.vertices, dummyDistance, dummyPredecessor);
     std::vector<float> distance(g.numVertices, INFINITY);
     std::vector<int> predecessor(g.numVertices, -1);
