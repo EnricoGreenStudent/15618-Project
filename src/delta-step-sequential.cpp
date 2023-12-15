@@ -153,6 +153,7 @@ public:
     this->numVertices = edges.size();
     this->edges = edges;
     this->heaviestEdgeWeight = 0;
+    this->buckets.clear();
     
     // separate into light and heavy edges
     lightEdges.resize(numVertices);
@@ -165,8 +166,10 @@ public:
         }
       }
     }
-    this->delta = heaviestEdgeWeight / 10;
+    this->delta = heaviestEdgeWeight / DELTA_FACTOR;
     for (int u = 0; u < numVertices; u++) {
+      lightEdges[u].clear();
+      heavyEdges[u].clear();
       for (edge &e : edges[u]) {
         float w = e.weight;
         if (w <= delta) {

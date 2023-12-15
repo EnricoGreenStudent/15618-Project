@@ -385,6 +385,11 @@ __global__ void collectDistanceUpdates() {
     this->numVertices = edges.size();
     this->edges = edges;
     this->heaviestEdgeWeight = 0;
+    buckets.clear();
+    lightEdges.clear();
+    heavyEdges.clear();
+    vLightOffsets.clear();
+    vHeavyOffsets.clear();
     
     // separate into light and heavy edges
     for (int u = 0; u < numVertices; u++) {
@@ -395,7 +400,7 @@ __global__ void collectDistanceUpdates() {
         }
       }
     }
-    this->delta = heaviestEdgeWeight / 10;
+    this->delta = heaviestEdgeWeight / DELTA_FACTOR;
     int lightIndex = 0;
     int heavyIndex = 0;
     for (int u = 0; u < numVertices; u++) {
