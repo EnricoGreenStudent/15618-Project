@@ -288,6 +288,7 @@ __global__ void collectDistanceUpdates() {
     cudaFree(cuRelaxIsMin);
     cudaFree(cuRelaxOutput);
   }
+
   
   void ParallelCUDADeltaStepping::deltaStep(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
     Timer t;
@@ -296,42 +297,8 @@ __global__ void collectDistanceUpdates() {
     double relaxTime = 0;
     double dataMovementTime = 0;
     t.reset();
-    this->source = source;
-    this->numVertices = edges.size();
-    this->edges = edges;
-    float heaviestEdgeWeight = 0;
     
-    // separate into light and heavy edges
-    // #pragma omp parallel for
-    for (int u = 0; u < numVertices; u++) {
-      for (edge &e : edges[u]) {
-        float w = e.weight;
-        if(w > heaviestEdgeWeight) {
-          heaviestEdgeWeight = w;
-        }
-      }
-    }
-    this->delta = heaviestEdgeWeight / 10;
-    int lightIndex = 0;
-    int heavyIndex = 0;
-    for (int u = 0; u < numVertices; u++) {
-      vLightOffsets.push_back(lightIndex);
-      vHeavyOffsets.push_back(heavyIndex);
-      for (edge &e : edges[u]) {
-        // int v = e.dest;
-        float w = e.weight;
-        if (w <= delta) {
-          lightEdges.push_back(e);
-          lightIndex++;
-        } else {
-          heavyEdges.push_back(e);
-          heavyIndex++;
-        }
-      }
-    }
-    vLightOffsets.push_back(lightIndex);
-    vHeavyOffsets.push_back(heavyIndex);
-    
+    // Algorithm-specific setup
     distance[source] = 0;
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     std::mutex bucketLocks[numBuckets];
@@ -409,6 +376,45 @@ __global__ void collectDistanceUpdates() {
     cudaFree(cuVHeavyOffsets);
     cudaFree(cuDistance);
     printf("CUDA Profiling:\n\tSetup: %f\n\tData movement: %f\n\tFind: %f\n\tRelax: %f\n", setupTime, dataMovementTime, findTime, relaxTime);
+  }
+
+  
+  void ParallelCUDADeltaStepping::init(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+    // Setup specific to loading the graph
+    this->source = source;
+    this->numVertices = edges.size();
+    this->edges = edges;
+    heaviestEdgeWeight = 0;
+    
+    // separate into light and heavy edges
+    for (int u = 0; u < numVertices; u++) {
+      for (edge &e : edges[u]) {
+        float w = e.weight;
+        if(w > heaviestEdgeWeight) {
+          heaviestEdgeWeight = w;
+        }
+      }
+    }
+    this->delta = heaviestEdgeWeight / 10;
+    int lightIndex = 0;
+    int heavyIndex = 0;
+    for (int u = 0; u < numVertices; u++) {
+      vLightOffsets.push_back(lightIndex);
+      vHeavyOffsets.push_back(heavyIndex);
+      for (edge &e : edges[u]) {
+        // int v = e.dest;
+        float w = e.weight;
+        if (w <= delta) {
+          lightEdges.push_back(e);
+          lightIndex++;
+        } else {
+          heavyEdges.push_back(e);
+          heavyIndex++;
+        }
+      }
+    }
+    vLightOffsets.push_back(lightIndex);
+    vHeavyOffsets.push_back(heavyIndex);
   }
 
   void ParallelCUDADeltaStepping::solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {

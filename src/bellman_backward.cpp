@@ -49,6 +49,16 @@ class ParallelBellmanFordBackward : public SSSPSolver {
 
 public:
   void bellmanFord(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+    // run Bellman-Ford round n-1 iterations
+    // std::vector<float> distance(numVertices, INFINITY);
+    // std::vector<int> predecessor(numVertices, -1);
+    distance[source] = 0;
+    for (int round = 1; round < numVertices; round++) {
+      bellmanFordRound(distance, predecessor);
+    }
+  }
+
+  void init(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
     this->source = source;
     this->numVertices = edges.size();
     this->edges = edges;
@@ -61,13 +71,6 @@ public:
         float w = e.weight;
         this->incomingEdges[v].push_back(edge{u, w});
       }
-    }
-    // run Bellman-Ford round n-1 iterations
-    // std::vector<float> distance(numVertices, INFINITY);
-    // std::vector<int> predecessor(numVertices, -1);
-    distance[source] = 0;
-    for (int round = 1; round < numVertices; round++) {
-      bellmanFordRound(distance, predecessor);
     }
   }
 

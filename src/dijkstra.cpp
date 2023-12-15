@@ -48,6 +48,8 @@ public:
     }
   }
 
+  void init(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {}
+
   void solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) override {
     dijkstra(source, edges, distance, predecessor);
   }

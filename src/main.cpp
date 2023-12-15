@@ -4,7 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "dijkstra.cpp"
-#include "bellman_forward.cpp"
+// #include "bellman_forward.cpp"
 #include "bellman_backward.cpp"
 #include "delta-step.cpp"
 #include "delta-step-sequential.cpp"
@@ -80,12 +80,15 @@ void dijkstraBenchmark(graph g) {
     std::vector<int> predecessor(g.numVertices, -1);
     Dijkstra solver;
     t.reset();
+    solver.init(0, g.vertices, distance, predecessor);
+    double initElapsed = t.elapsed();
     solver.dijkstra(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
-    printf("Dijkstra Runtime: %.4f\n", elapsed);
+    printf("Dijkstra Runtime: %.4f (%.4f)\n", elapsed-initElapsed, elapsed);
     saveResults(distance, "out-ref.txt");
 }
 
+/*
 void bellmanForwardBenchmark(graph g) {
     Timer t;
     std::vector<float> distance(g.numVertices, INFINITY);
@@ -102,6 +105,7 @@ void bellmanForwardBenchmark(graph g) {
         printf("Forward Bellman-Ford Incorrect (Runtime: %.4f)\n", elapsed);
     }
 }
+*/
 
 void bellmanBackwardBenchmark(graph g) {
     Timer t;
@@ -109,12 +113,14 @@ void bellmanBackwardBenchmark(graph g) {
     std::vector<int> predecessor(g.numVertices, -1);
     ParallelBellmanFordBackward solver;
     t.reset();
+    solver.init(0, g.vertices, distance, predecessor);
+    double initElapsed = t.elapsed();
     solver.bellmanFord(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
     saveResults(distance, "out.txt");
     bool correct = checkCorrectness("out-ref.txt", "out.txt");
     if(correct) {
-        printf("Backward Bellman-Ford Runtime: %.4f\n", elapsed);
+        printf("Backward Bellman-Ford Runtime: %.4f (%.4f)\n", elapsed-initElapsed, elapsed);
     } else {
         printf("Backward Bellman-Ford Incorrect (Runtime: %.4f)\n", elapsed);
     }
@@ -129,12 +135,14 @@ void deltaStepOpenMPBenchmark(graph g) {
     std::vector<float> distance(g.numVertices, INFINITY);
     std::vector<int> predecessor(g.numVertices, -1);
     t.reset();
+    solver.init(0, g.vertices, distance, predecessor);
+    double initElapsed = t.elapsed();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
     saveResults(distance, "out.txt");
     bool correct = checkCorrectness("out-ref.txt", "out.txt");
     if(correct) {
-        printf("Delta Stepping OpenMP Runtime: %.4f\n", elapsed);
+        printf("Delta Stepping OpenMP Runtime: %.4f (%.4f)\n", elapsed-initElapsed, elapsed);
     } else {
         printf("Delta Stepping OpenMP Incorrect (Runtime: %.4f)\n", elapsed);
     }
@@ -146,12 +154,14 @@ void deltaStepSequentialBenchmark(graph g) {
     std::vector<int> predecessor(g.numVertices, -1);
     SequentialDeltaStepping solver;
     t.reset();
+    solver.init(0, g.vertices, distance, predecessor);
+    double initElapsed = t.elapsed();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
     saveResults(distance, "out.txt");
     bool correct = checkCorrectness("out-ref.txt", "out.txt");
     if(correct) {
-        printf("Sequential Delta Stepping Runtime: %.4f\n", elapsed);
+        printf("Sequential Delta Stepping Runtime: %.4f (%.4f)\n", elapsed-initElapsed, elapsed);
     } else {
         printf("Sequential Delta Stepping Incorrect (Runtime: %.4f)\n", elapsed);
     }
@@ -166,12 +176,14 @@ void deltaStepCudaBenchmark(graph g) {
     std::vector<float> distance(g.numVertices, INFINITY);
     std::vector<int> predecessor(g.numVertices, -1);
     t.reset();
+    solver.init(0, g.vertices, distance, predecessor);
+    double initElapsed = t.elapsed();
     solver.solve(0, g.vertices, distance, predecessor);
     double elapsed = t.elapsed();
     saveResults(distance, "out-cuda.txt");
     bool correct = checkCorrectness("out-ref.txt", "out-cuda.txt");
     if(correct) {
-        printf("Delta Stepping CUDA Runtime: %.4f\n", elapsed);
+        printf("Delta Stepping CUDA Runtime: %.4f (%.4f)\n", elapsed-initElapsed, elapsed);
     } else {
         printf("Delta Stepping CUDA Incorrect (Runtime: %.4f)\n", elapsed);
     }

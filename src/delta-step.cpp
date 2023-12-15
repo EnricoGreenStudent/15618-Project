@@ -25,6 +25,7 @@ class ParallelDeltaStepping : public SSSPSolver {
   // Preprocessed data
   float delta;
   int numBuckets;
+  float heaviestEdgeWeight;
   std::vector<std::vector<edge>> lightEdges;
   std::vector<std::vector<edge>> heavyEdges;
   // Updating fields
@@ -81,35 +82,7 @@ public:
     double findTime = 0;
     double relaxTime = 0;
     t.reset();
-    this->source = source;
-    this->numVertices = edges.size();
-    this->edges = edges;
-    float heaviestEdgeWeight = 0;
-    
-    // separate into light and heavy edges
-    lightEdges.resize(numVertices);
-    heavyEdges.resize(numVertices);
-    #pragma omp parallel for
-    for (int u = 0; u < numVertices; u++) {
-      for (edge &e : edges[u]) {
-        float w = e.weight;
-        if(w > heaviestEdgeWeight) {
-          heaviestEdgeWeight = w;
-        }
-      }
-    }
-    this->delta = heaviestEdgeWeight / 10;
-    #pragma omp parallel for
-    for (int u = 0; u < numVertices; u++) {
-      for (edge &e : edges[u]) {
-        float w = e.weight;
-        if (w <= delta) {
-          lightEdges[u].push_back(e);
-        } else {
-          heavyEdges[u].push_back(e);
-        }
-      }
-    }
+
     this->numBuckets = (int) std::ceil(heaviestEdgeWeight / this->delta) + 1;
     std::mutex bucketLocks[numBuckets];
     std::mutex vertexLocks[numVertices];
@@ -173,6 +146,39 @@ public:
       currentBucket = (currentBucket + 1) % this->numBuckets;
     }
     printf("OpenMP Profiling:\n\tSetup: %f\n\tFind: %f\n\tRelax: %f\n", setupTime, findTime, relaxTime);
+  }
+
+  void init(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) {
+    // Setup specific to loading the graph
+    this->source = source;
+    this->numVertices = edges.size();
+    this->edges = edges;
+    this->heaviestEdgeWeight = 0;
+    
+    // separate into light and heavy edges
+    lightEdges.resize(numVertices);
+    heavyEdges.resize(numVertices);
+    #pragma omp parallel for
+    for (int u = 0; u < numVertices; u++) {
+      for (edge &e : edges[u]) {
+        float w = e.weight;
+        if(w > heaviestEdgeWeight) {
+          heaviestEdgeWeight = w;
+        }
+      }
+    }
+    this->delta = heaviestEdgeWeight / 10;
+    #pragma omp parallel for
+    for (int u = 0; u < numVertices; u++) {
+      for (edge &e : edges[u]) {
+        float w = e.weight;
+        if (w <= delta) {
+          lightEdges[u].push_back(e);
+        } else {
+          heavyEdges[u].push_back(e);
+        }
+      }
+    }
   }
 
   void solve(int source, std::vector<std::vector<edge>> &edges, std::vector<float> &distance, std::vector<int> &predecessor) override {

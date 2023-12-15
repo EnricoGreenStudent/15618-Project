@@ -28,15 +28,16 @@ typedef struct cuRequest_st {
  * Class definition
 */
 class ParallelCUDADeltaStepping : public SSSPSolver {
-  // Constant values, in shared memory
+  // Constant input values
   int source;
   int numVertices;
   std::vector<std::vector<edge>> edges;
-  // Preprocessed data
+  // Delta-stepping parameters
   float delta;
   int numBuckets;
+  float heaviestEdgeWeight;
   std::vector<std::set<int>> buckets; // can use unordered_set for O(1) randomized?
-  // Constant values, in shared memory
+  // Preprocessed edges
   std::vector<edge> lightEdges;
   std::vector<int> vLightOffsets; // start of edges for each vertex in `lightEdges`
   std::vector<edge> heavyEdges;
