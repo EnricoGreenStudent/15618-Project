@@ -38,65 +38,18 @@ class ParallelDeltaStepping : public SSSPSolver {
   }
 
   /**
-   * @param[in] nodes vertices to process
-   * @param[in] type light or heavy
-   * @return list of requests
+   * Helper function for adding requests to local request list
   */
-  std::vector<request> findRequests(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
-    std::vector<request> requests;
-    std::mutex requestsLock;
-    #pragma omp parallel
-    #pragma omp single nowait
-    // Idea: increase granularity of tasks by passing multiple nodes at once in order to reduce contention on requests vector
-    for (int u : nodes) {
-      #pragma omp task
-      findOneRequest(u, type, distance, requests, requestsLock);
-    }
-    #pragma omp taskwait
-    return requests;
-  }
-
-  /**
-  * Helper function for findRequests -- finds all the requests for a single node
-  */
-  void findOneRequest(int u, EdgeType type, std::vector<float> &distance, std::vector<request> &requests, std::mutex &requestsLock) {
-    std::vector<request> req;
+  void findRequestsForVertex(int u, EdgeType type, std::vector<float> &distance, std::vector<request> &localReqs) {
     std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
     for (edge &e : searchEdges[u]) {
       int v = e.dest;
       float w = e.weight;
-      req.push_back(std::make_pair(v, distance[u] + w));
+      localReqs.push_back(std::make_pair(v, distance[u] + w));
     }
-    requestsLock.lock();
-    requests.insert(requests.end(), req.begin(), req.end());
-    requestsLock.unlock();
-  }
-
-  /**
-   * Like findRequests but directly finds the lowest distance among the requests
-   * @param[out] updated set of destination nodes that have 
-   * @return lowest distance found among requests to each vertex
-  */
-  std::map<int, float> findMinNewDists(std::set<int> &nodes, EdgeType type, std::vector<float> &distance) {
-    std::map<int, float> minDists;
-    // to parallelize, split the nodes among processes (one split at the start?)
-    // maybe keep track of local minDists and reduction to get min for each index
-    for (int u : nodes) {
-      std::vector<std::vector<edge>> &searchEdges = (type == EdgeType::LIGHT) ? lightEdges : heavyEdges;
-      for (edge &e : searchEdges[u]) {
-        int v = e.dest;
-        float w = e.weight;
-        float newDist = distance[u] + w;
-        if (newDist < minDists[v]) {
-          minDists[v] = newDist;
-        }
-      }
-    }
-    return minDists;
   }
 
   void relaxRequests(std::vector<request> &requests, std::mutex *bucketLocks, std::mutex *vertexLocks, std::vector<float> &distance) {
-    #pragma omp parallel for
     for (request &req : requests) {
       int v = req.first;
       float dist = req.second;
@@ -170,23 +123,51 @@ public:
       if (!buckets[currentBucket].empty()) {
         std::vector<request> requests;
         std::set<int> deletedNodes;
+        std::vector<int> nodes;
         // Inner loop
         while (!buckets[currentBucket].empty()) {
           t.reset();
-          requests = findRequests(buckets[currentBucket], LIGHT, distance);
-          findTime += t.elapsed();
-          deletedNodes.insert(buckets[currentBucket].begin(), buckets[currentBucket].end());
-          buckets[currentBucket].clear();
-          t.reset();
-          relaxRequests(requests, bucketLocks, vertexLocks, distance);
-          relaxTime += t.elapsed();
+          nodes.assign(buckets[currentBucket].begin(), buckets[currentBucket].end());
+          #pragma omp parallel
+          {
+            std::vector<request> localReqs;
+            #pragma omp for
+            for (int u : nodes) {
+              findRequestsForVertex(u, LIGHT, distance, localReqs);
+            }
+            #pragma omp barrier
+            #pragma omp single
+            {
+              findTime += t.elapsed();
+              deletedNodes.insert(nodes.begin(), nodes.end());
+              buckets[currentBucket].clear();
+              t.reset();
+            }
+            #pragma omp barrier
+            relaxRequests(localReqs, bucketLocks, vertexLocks, distance);
+            #pragma omp single
+            relaxTime += t.elapsed();
+          }
         }
         t.reset();
-        requests = findRequests(deletedNodes, HEAVY, distance);
-        findTime += t.elapsed();
-        t.reset();
-        relaxRequests(requests, bucketLocks, vertexLocks, distance);
-        relaxTime += t.elapsed();
+        nodes.assign(deletedNodes.begin(), deletedNodes.end());
+        #pragma omp parallel
+        {
+          std::vector<request> localReqs;
+          #pragma omp for
+          for (int u : nodes) {
+            findRequestsForVertex(u, HEAVY, distance, localReqs);
+          }
+          #pragma omp single
+          {
+            findTime += t.elapsed();
+            t.reset();
+          }
+          #pragma omp barrier
+          relaxRequests(localReqs, bucketLocks, vertexLocks, distance);
+          #pragma omp single
+          relaxTime += t.elapsed();
+        }
         lastEmptiedBucket = currentBucket;
       }
       currentBucket = (currentBucket + 1) % this->numBuckets;
@@ -198,28 +179,3 @@ public:
     deltaStep(source, edges, distance, predecessor);
   }
 };
-/*
-int main() {
-  std::vector<std::vector<edge>> edges;
-  std::vector<std::vector<edge>> incomingEdges;
-  int numVertices, numEdges, source;
-  std::cin >> numVertices >> numEdges >> source;
-  edges.resize(numVertices);
-  incomingEdges.resize(numVertices);
-  for (int i = 0; i < numEdges; i++) {
-    int u, v;
-    float w;
-    std::cin >> u >> v >> w;
-    edges[u].push_back(edge{v, w});
-    incomingEdges[v].push_back(edge{u, w});
-  }
-  std::vector<float> distance(numVertices, INFINITY);
-  std::vector<int> predecessor(numVertices, -1);
-  ParallelDeltaStepping solver;
-  solver.solve(source, edges, distance, predecessor);
-  // print results
-  for (int u = 0; u < numVertices; u++) {
-    std::cout << "vert " << u << " dist " << distance[u] << " pred " << predecessor[u] << "\n";
-  }
-}
-*/
